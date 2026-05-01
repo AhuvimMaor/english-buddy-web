@@ -15,7 +15,16 @@ export default function ProfilePage() {
     if (!loading && !firebaseUser) router.replace('/login');
   }, [loading, firebaseUser, router]);
 
-  if (!profile) return null;
+  if (loading || !profile) {
+    return (
+      <div className="min-h-screen" style={{background: '#f8f9fa'}}>
+        <NavBar />
+        <div className="flex justify-center py-16">
+          <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
+        </div>
+      </div>
+    );
+  }
 
   const toggleOnline = async () => {
     if (!firebaseUser) return;
@@ -31,7 +40,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen" style={{background: '#f8f9fa'}}>
       <NavBar />
       <main className="max-w-2xl mx-auto px-4 py-6">
         <div className="text-center mb-8">

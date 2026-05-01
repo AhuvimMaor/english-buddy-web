@@ -82,20 +82,25 @@ function CallContent() {
   const handleRemoteHangup = async () => {
     if (endingRef.current) return;
     endingRef.current = true;
+    const wasConnected = durationRef.current > 0;
     setStatus('ended');
     if (timerRef.current) clearInterval(timerRef.current);
 
     const rtc = webrtcRef.current;
     if (rtc) {
       const blob = rtc.stopRecording();
-      if (blob && callId && firebaseUser) {
+      if (blob && callId && firebaseUser && wasConnected) {
         const storageRef = ref(storage, `recordings/${callId}/${firebaseUser.uid}.webm`);
         await uploadBytes(storageRef, blob);
       }
       await rtc.cleanup();
     }
 
-    router.push(`/call/processing?callId=${callId}`);
+    if (wasConnected) {
+      router.push(`/call/processing?callId=${callId}`);
+    } else {
+      router.push('/partners');
+    }
   };
 
   const initCall = useCallback(async () => {
@@ -209,10 +214,11 @@ function CallContent() {
     setStatus('ended');
     if (timerRef.current) clearInterval(timerRef.current);
 
+    const wasConnected = durationRef.current > 0;
     const rtc = webrtcRef.current;
     if (rtc) {
       const blob = rtc.stopRecording();
-      if (blob && callId && firebaseUser) {
+      if (blob && callId && firebaseUser && wasConnected) {
         const storageRef = ref(storage, `recordings/${callId}/${firebaseUser.uid}.webm`);
         await uploadBytes(storageRef, blob);
         await updateDoc(doc(db, 'calls', callId), {
@@ -227,7 +233,11 @@ function CallContent() {
       await rtc.cleanup();
     }
 
-    router.push(`/call/processing?callId=${callId}`);
+    if (wasConnected) {
+      router.push(`/call/processing?callId=${callId}`);
+    } else {
+      router.push('/partners');
+    }
   };
 
   const handleMute = () => {
