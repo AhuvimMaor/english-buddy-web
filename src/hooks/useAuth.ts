@@ -43,17 +43,17 @@ export function useAuth() {
     if (!firebaseUser) return;
 
     const userRef = doc(db, 'users', firebaseUser.uid);
-
-    // Reset stuck inCall status on load
-    updateDoc(userRef, {
-      inCall: false,
-      isOnline: true,
-      updatedAt: serverTimestamp(),
-    }).catch(() => {});
+    let resetDone = false;
 
     const unsub = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
-        setProfile({ id: snap.id, ...snap.data() } as UserProfile);
+        const data = snap.data();
+        setProfile({ id: snap.id, ...data } as UserProfile);
+
+        if (!resetDone && data.inCall) {
+          resetDone = true;
+          updateDoc(userRef, { inCall: false, isOnline: true }).catch(() => {});
+        }
       }
       setLoading(false);
     });
