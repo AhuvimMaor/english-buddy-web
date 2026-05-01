@@ -3,7 +3,7 @@
 import { useAuthContext } from '@/components/AuthProvider';
 import { NavBar } from '@/components/NavBar';
 import { db } from '@/lib/firebase';
-import { collection, query, where, orderBy, limit, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, limit, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Call } from '@/types';
@@ -17,7 +17,7 @@ function CallItem({ call, userId }: { call: Call; userId: string }) {
   useEffect(() => {
     getDoc(doc(db, 'users', partnerId)).then(snap => {
       if (snap.exists()) setPartnerName(snap.data().displayName);
-    });
+    }).catch(() => setPartnerName('Unknown'));
   }, [partnerId]);
 
   const duration = call.durationSeconds
@@ -54,6 +54,7 @@ export default function HistoryPage() {
   const router = useRouter();
   const [calls, setCalls] = useState<Call[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (!authLoading && !firebaseUser) router.replace('/login');
@@ -62,49 +63,40 @@ export default function HistoryPage() {
   useEffect(() => {
     if (!firebaseUser) return;
 
-    const q1 = query(
+    const q = query(
       collection(db, 'calls'),
-      where('callerId', '==', firebaseUser.uid),
-      where('status', '==', 'ended'),
-      orderBy('endedAt', 'desc'),
-      limit(20),
-    );
-    const q2 = query(
-      collection(db, 'calls'),
-      where('calleeId', '==', firebaseUser.uid),
-      where('status', '==', 'ended'),
-      orderBy('endedAt', 'desc'),
-      limit(20),
+      limit(50),
     );
 
-    let callerCalls: Call[] = [];
-    let calleeCalls: Call[] = [];
-
-    const merge = () => {
-      const all = [...callerCalls, ...calleeCalls].sort(
-        (a, b) => (b.endedAt?.seconds || 0) - (a.endedAt?.seconds || 0),
-      );
-      setCalls(all);
+    const unsub = onSnapshot(q, (snap) => {
+      const userCalls = snap.docs
+        .map(d => ({ id: d.id, ...d.data() } as Call))
+        .filter(c =>
+          c.status === 'ended' &&
+          (c.callerId === firebaseUser.uid || c.calleeId === firebaseUser.uid)
+        )
+        .sort((a, b) => (b.endedAt?.seconds || 0) - (a.endedAt?.seconds || 0));
+      setCalls(userCalls);
       setLoading(false);
-    };
-
-    const u1 = onSnapshot(q1, snap => {
-      callerCalls = snap.docs.map(d => ({ id: d.id, ...d.data() } as Call));
-      merge();
-    });
-    const u2 = onSnapshot(q2, snap => {
-      calleeCalls = snap.docs.map(d => ({ id: d.id, ...d.data() } as Call));
-      merge();
+    }, (err) => {
+      console.error('[History] Query error:', err);
+      setError(err.message);
+      setLoading(false);
     });
 
-    return () => { u1(); u2(); };
+    return unsub;
   }, [firebaseUser]);
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen" style={{background: '#f8f9fa'}}>
       <NavBar />
       <main className="max-w-2xl mx-auto px-4 py-6">
         <h1 className="text-xl font-bold text-gray-900 mb-4">Call History</h1>
+
+        {error && (
+          <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm mb-4">{error}</div>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
