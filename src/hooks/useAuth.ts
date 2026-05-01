@@ -6,6 +6,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   updateProfile,
@@ -74,15 +76,14 @@ export function useAuth() {
     });
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
-    const provider = new GoogleAuthProvider();
-    const cred = await signInWithPopup(auth, provider);
-    const userDoc = await getDoc(doc(db, 'users', cred.user.uid));
+  const createUserProfile = useCallback(async (user: FirebaseUser) => {
+    const userDocRef = doc(db, 'users', user.uid);
+    const userDoc = await getDoc(userDocRef);
     if (!userDoc.exists()) {
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        displayName: cred.user.displayName || 'User',
-        email: cred.user.email || '',
-        photoURL: cred.user.photoURL || null,
+      await setDoc(userDocRef, {
+        displayName: user.displayName || 'User',
+        email: user.email || '',
+        photoURL: user.photoURL || null,
         englishLevel: 'beginner',
         nativeLanguage: 'hebrew',
         availability: EMPTY_AVAILABILITY,
@@ -96,10 +97,33 @@ export function useAuth() {
         updatedAt: serverTimestamp(),
       });
     } else {
-      await updateDoc(doc(db, 'users', cred.user.uid), {
+      await updateDoc(userDocRef, {
         isOnline: true,
         updatedAt: serverTimestamp(),
       });
+    }
+  }, []);
+
+  // Handle redirect result on page load
+  useEffect(() => {
+    getRedirectResult(auth).then(async (result) => {
+      if (result?.user) {
+        await createUserProfile(result.user);
+      }
+    }).catch(() => {});
+  }, [createUserProfile]);
+
+  const signInWithGoogle = useCallback(async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      const cred = await signInWithPopup(auth, provider);
+      await createUserProfile(cred.user);
+    } catch (err: any) {
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/popup-closed-by-user') {
+        await signInWithRedirect(auth, provider);
+      } else {
+        throw err;
+      }
     }
   }, []);
 
