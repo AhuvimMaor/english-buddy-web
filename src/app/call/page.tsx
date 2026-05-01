@@ -21,6 +21,7 @@ function CallContent() {
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
   const [callId, setCallId] = useState(callIdParam || '');
+  const [error, setError] = useState('');
   const endingRef = useRef(false);
 
   const webrtcRef = useRef<WebRTCCall | null>(null);
@@ -132,7 +133,13 @@ function CallContent() {
       }
     };
 
-    await rtc.start();
+    try {
+      await rtc.start();
+    } catch (err: any) {
+      console.error('[Call] Mic access failed:', err);
+      setError('Microphone access denied. Please allow microphone in browser settings.');
+      return;
+    }
 
     if (!isCallee) {
       await rtc.createOffer();
@@ -213,11 +220,19 @@ function CallContent() {
         </div>
         <h2 className="text-2xl font-bold">{partnerName || 'Connecting...'}</h2>
         <p className="text-white/50 mt-1">
-          {status === 'init' && 'Setting up...'}
+          {error ? '' : status === 'init' && 'Setting up...'}
           {status === 'ringing' && (isCallee ? 'Connecting...' : 'Calling...')}
           {status === 'connected' && 'Connected'}
           {status === 'ended' && 'Call ended'}
         </p>
+        {error && (
+          <div className="mt-4 bg-red-500/20 text-red-300 px-4 py-3 rounded-xl text-sm max-w-xs">
+            {error}
+            <button onClick={() => router.push('/partners')} className="block mt-2 text-white underline">
+              Go back
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-8 pb-12">
