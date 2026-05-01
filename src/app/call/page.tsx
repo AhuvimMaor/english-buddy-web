@@ -145,8 +145,15 @@ function CallContent() {
     try {
       await rtc.start();
     } catch (err: any) {
-      console.error('[Call] Mic access failed:', err);
-      setError('Microphone access denied. Please allow microphone in browser settings.');
+      console.error('[Call] Start failed:', err);
+      const msg = err?.message || err?.name || String(err);
+      if (msg.includes('Permission') || msg.includes('NotAllowed')) {
+        setError('Microphone blocked. On iPhone: Settings → Safari → Microphone → Allow. Then reload this page.');
+      } else if (msg.includes('NotFound') || msg.includes('DevicesNotFound')) {
+        setError('No microphone found on this device.');
+      } else {
+        setError(`Call setup failed: ${msg}`);
+      }
       return;
     }
 
@@ -177,7 +184,13 @@ function CallContent() {
       stream.getTracks().forEach(t => t.stop());
       setMicGranted(true);
     } catch (err: any) {
-      setError('Microphone access denied. Please allow microphone in your browser settings and try again.');
+      const msg = err?.message || err?.name || String(err);
+      console.error('[Call] Mic request failed:', msg);
+      if (msg.includes('NotAllowed') || msg.includes('Permission')) {
+        setError('Microphone blocked by your browser. On iPhone: go to Settings → Safari → Microphone → Allow. On Chrome: tap the lock icon in the address bar → Site settings → Microphone → Allow.');
+      } else {
+        setError(`Microphone error: ${msg}`);
+      }
     }
   };
 
