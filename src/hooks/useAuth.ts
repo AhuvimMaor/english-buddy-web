@@ -5,10 +5,13 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
   updateProfile,
   User as FirebaseUser,
 } from 'firebase/auth';
+import { getDoc } from 'firebase/firestore';
 import { doc, setDoc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { UserProfile } from '@/types';
@@ -71,6 +74,35 @@ export function useAuth() {
     });
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    const provider = new GoogleAuthProvider();
+    const cred = await signInWithPopup(auth, provider);
+    const userDoc = await getDoc(doc(db, 'users', cred.user.uid));
+    if (!userDoc.exists()) {
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        displayName: cred.user.displayName || 'User',
+        email: cred.user.email || '',
+        photoURL: cred.user.photoURL || null,
+        englishLevel: 'beginner',
+        nativeLanguage: 'hebrew',
+        availability: EMPTY_AVAILABILITY,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        isOnline: true,
+        inCall: false,
+        fcmToken: null,
+        totalCallMinutes: 0,
+        callCount: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await updateDoc(doc(db, 'users', cred.user.uid), {
+        isOnline: true,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  }, []);
+
   const signOut = useCallback(async () => {
     if (firebaseUser) {
       await updateDoc(doc(db, 'users', firebaseUser.uid), { isOnline: false });
@@ -78,5 +110,5 @@ export function useAuth() {
     await firebaseSignOut(auth);
   }, [firebaseUser]);
 
-  return { firebaseUser, profile, loading, signIn, signUp, signOut };
+  return { firebaseUser, profile, loading, signIn, signUp, signInWithGoogle, signOut };
 }
