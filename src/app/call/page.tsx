@@ -17,6 +17,7 @@ function CallContent() {
   const isCallee = searchParams.get('role') === 'callee';
 
   const [partnerName, setPartnerName] = useState('');
+  const [micGranted, setMicGranted] = useState(false);
   const [status, setStatus] = useState<'init' | 'ringing' | 'connected' | 'ended'>('init');
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
@@ -161,12 +162,33 @@ function CallContent() {
     }
   }, [firebaseUser, partnerId, callId, isCallee]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Request mic permission first, then start call
   useEffect(() => {
+    if (!micGranted) return;
     initCall();
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [micGranted]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const requestMic = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t => t.stop());
+      setMicGranted(true);
+    } catch (err: any) {
+      setError('Microphone access denied. Please allow microphone in your browser settings and try again.');
+    }
+  };
+
+  // Auto-request on mount
+  useEffect(() => {
+    navigator.permissions?.query({ name: 'microphone' as PermissionName }).then(result => {
+      if (result.state === 'granted') {
+        setMicGranted(true);
+      }
+    }).catch(() => {});
+  }, []);
 
   const handleEnd = async () => {
     if (endingRef.current) return;
@@ -205,6 +227,32 @@ function CallContent() {
     const sec = s % 60;
     return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
+
+  if (!micGranted && !error) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-800 text-white p-8">
+        <div className="text-center max-w-sm">
+          <div className="text-6xl mb-6">🎤</div>
+          <h2 className="text-xl font-bold mb-2">Microphone Access Needed</h2>
+          <p className="text-white/60 mb-8">
+            English Buddy needs your microphone to make voice calls. Tap the button below and allow access when prompted.
+          </p>
+          <button
+            onClick={requestMic}
+            className="w-full py-4 bg-blue-500 text-white font-semibold rounded-xl hover:bg-blue-600 transition text-lg"
+          >
+            Allow Microphone
+          </button>
+          <button
+            onClick={() => router.push('/partners')}
+            className="mt-4 text-sm text-white/40 hover:text-white/60"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-between bg-gradient-to-b from-slate-900 to-slate-800 text-white p-8">
