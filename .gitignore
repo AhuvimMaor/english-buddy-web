@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env.local
+
+# debug logs
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.a5c/
+.serena/
+.playwright-mcp/

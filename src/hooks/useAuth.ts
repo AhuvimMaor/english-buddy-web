@@ -1,0 +1,82 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  updateProfile,
+  User as FirebaseUser,
+} from 'firebase/auth';
+import { doc, setDoc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
+import { UserProfile } from '@/types';
+
+const EMPTY_AVAILABILITY = {
+  sunday: [], monday: [], tuesday: [], wednesday: [],
+  thursday: [], friday: [], saturday: [],
+};
+
+export function useAuth() {
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      if (!user) {
+        setProfile(null);
+        setLoading(false);
+      }
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!firebaseUser) return;
+
+    const unsub = onSnapshot(doc(db, 'users', firebaseUser.uid), (snap) => {
+      if (snap.exists()) {
+        setProfile({ id: snap.id, ...snap.data() } as UserProfile);
+      }
+      setLoading(false);
+    });
+    return unsub;
+  }, [firebaseUser]);
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth, email, password);
+  }, []);
+
+  const signUp = useCallback(async (email: string, password: string, displayName: string) => {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(cred.user, { displayName });
+
+    await setDoc(doc(db, 'users', cred.user.uid), {
+      displayName,
+      email,
+      photoURL: null,
+      englishLevel: 'beginner',
+      nativeLanguage: 'hebrew',
+      availability: EMPTY_AVAILABILITY,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      isOnline: true,
+      fcmToken: null,
+      totalCallMinutes: 0,
+      callCount: 0,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }, []);
+
+  const signOut = useCallback(async () => {
+    if (firebaseUser) {
+      await updateDoc(doc(db, 'users', firebaseUser.uid), { isOnline: false });
+    }
+    await firebaseSignOut(auth);
+  }, [firebaseUser]);
+
+  return { firebaseUser, profile, loading, signIn, signUp, signOut };
+}
