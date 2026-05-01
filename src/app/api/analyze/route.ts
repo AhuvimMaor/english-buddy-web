@@ -4,7 +4,9 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI() {
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 function getAdminDb() {
   if (getApps().length === 0) {
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest) {
           { type: 'audio/webm' },
         );
 
-        const result = await openai.audio.transcriptions.create({
+        const result = await getOpenAI().audio.transcriptions.create({
           file: audioFile,
           model: 'whisper-1',
         });
@@ -90,7 +92,7 @@ export async function POST(req: NextRequest) {
     const callerDoc = await db.collection('users').doc(callData.callerId).get();
     const callerName = callerDoc.data()?.displayName || 'User';
 
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: 'gpt-4o',
       response_format: { type: 'json_object' },
       messages: [
