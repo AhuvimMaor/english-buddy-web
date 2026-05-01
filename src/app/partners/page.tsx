@@ -70,7 +70,7 @@ function PartnerCard({ user, onCall }: { user: UserProfile; onCall: () => void }
 
 export default function PartnersPage() {
   const { firebaseUser, loading: authLoading } = useAuthContext();
-  const { partners, loading } = usePartners(firebaseUser?.uid);
+  const { partners, loading, error: partnersError } = usePartners(firebaseUser?.uid);
   const router = useRouter();
 
   useEffect(() => {
@@ -91,7 +91,13 @@ export default function PartnersPage() {
       <main className="max-w-2xl mx-auto px-4 py-6">
         <h1 className="text-xl font-bold text-gray-900 mb-4">Available Partners</h1>
 
-        {partners.length === 0 ? (
+        {partnersError && (
+          <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg text-sm mb-4">
+            Error loading partners: {partnersError}
+          </div>
+        )}
+
+        {!partnersError && partners.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-5xl mb-4">😴</p>
             <p className="text-lg font-semibold text-gray-900">No partners online right now</p>
