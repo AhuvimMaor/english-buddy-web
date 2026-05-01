@@ -39,17 +39,25 @@ function CallContent() {
   // Set user status to "inCall" on mount, restore on unmount
   useEffect(() => {
     if (!firebaseUser) return;
-    updateDoc(doc(db, 'users', firebaseUser.uid), {
+    const userRef = doc(db, 'users', firebaseUser.uid);
+    updateDoc(userRef, {
       inCall: true,
       isOnline: false,
       updatedAt: serverTimestamp(),
     });
-    return () => {
-      updateDoc(doc(db, 'users', firebaseUser.uid), {
+
+    const resetStatus = () => {
+      updateDoc(userRef, {
         inCall: false,
         isOnline: true,
         updatedAt: serverTimestamp(),
       });
+    };
+
+    window.addEventListener('beforeunload', resetStatus);
+    return () => {
+      window.removeEventListener('beforeunload', resetStatus);
+      resetStatus();
     };
   }, [firebaseUser]);
 

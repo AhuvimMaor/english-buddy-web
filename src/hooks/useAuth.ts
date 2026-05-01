@@ -42,7 +42,16 @@ export function useAuth() {
   useEffect(() => {
     if (!firebaseUser) return;
 
-    const unsub = onSnapshot(doc(db, 'users', firebaseUser.uid), (snap) => {
+    const userRef = doc(db, 'users', firebaseUser.uid);
+
+    // Reset stuck inCall status on load
+    updateDoc(userRef, {
+      inCall: false,
+      isOnline: true,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {});
+
+    const unsub = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
         setProfile({ id: snap.id, ...snap.data() } as UserProfile);
       }
