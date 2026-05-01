@@ -1,14 +1,29 @@
 import { db } from './firebase';
 import {
-  doc, collection, addDoc, onSnapshot, updateDoc, serverTimestamp,
-  query, orderBy, getDocs, writeBatch,
+  doc, collection, addDoc, onSnapshot, serverTimestamp,
 } from 'firebase/firestore';
-import { IceCandidateData, SignalingMessage } from '@/types';
 
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun.relay.metered.ca:80' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
 };
 
@@ -20,6 +35,8 @@ export class WebRTCCall {
   private callId: string;
   private userId: string;
   private unsubSignaling: (() => void) | null = null;
+  private pendingCandidates: RTCIceCandidateInit[] = [];
+  private hasRemoteDescription = false;
 
   onRemoteStream: ((stream: MediaStream) => void) | null = null;
   onConnectionState: ((state: RTCPeerConnectionState) => void) | null = null;
@@ -53,7 +70,15 @@ export class WebRTCCall {
     };
 
     this.pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] Connection state:', this.pc.connectionState);
       this.onConnectionState?.(this.pc.connectionState);
+    };
+
+    this.pc.oniceconnectionstatechange = () => {
+      console.log('[WebRTC] ICE state:', this.pc.iceConnectionState);
+      if (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') {
+        this.onConnectionState?.('connected');
+      }
     };
   }
 
@@ -75,20 +100,35 @@ export class WebRTCCall {
       candidate: null,
       createdAt: serverTimestamp(),
     });
+    console.log('[WebRTC] Offer sent');
+  }
+
+  private async addBufferedCandidates() {
+    for (const candidate of this.pendingCandidates) {
+      try {
+        await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.warn('[WebRTC] Failed to add buffered candidate:', e);
+      }
+    }
+    this.pendingCandidates = [];
   }
 
   private listenSignaling() {
     const sigRef = collection(db, 'calls', this.callId, 'signaling');
-    const q = query(sigRef, orderBy('createdAt', 'asc'));
 
-    this.unsubSignaling = onSnapshot(q, (snap) => {
+    this.unsubSignaling = onSnapshot(sigRef, (snap) => {
       snap.docChanges().forEach(async (change) => {
         if (change.type !== 'added') return;
         const data = change.doc.data();
         if (data.from === this.userId) return;
 
+        console.log('[WebRTC] Received signaling:', data.type);
+
         if (data.type === 'offer' && data.sdp) {
           await this.pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+          this.hasRemoteDescription = true;
+          await this.addBufferedCandidates();
           const answer = await this.pc.createAnswer();
           await this.pc.setLocalDescription(answer);
           await addDoc(sigRef, {
@@ -98,10 +138,22 @@ export class WebRTCCall {
             candidate: null,
             createdAt: serverTimestamp(),
           });
+          console.log('[WebRTC] Answer sent');
         } else if (data.type === 'answer' && data.sdp) {
           await this.pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
+          this.hasRemoteDescription = true;
+          await this.addBufferedCandidates();
+          console.log('[WebRTC] Answer received');
         } else if (data.type === 'ice-candidate' && data.candidate) {
-          await this.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          if (this.hasRemoteDescription) {
+            try {
+              await this.pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } catch (e) {
+              console.warn('[WebRTC] Failed to add candidate:', e);
+            }
+          } else {
+            this.pendingCandidates.push(data.candidate);
+          }
         }
       });
     });
@@ -109,9 +161,12 @@ export class WebRTCCall {
 
   startRecording() {
     if (!this.localStream) return;
-
     this.chunks = [];
-    this.recorder = new MediaRecorder(this.localStream, { mimeType: 'audio/webm;codecs=opus' });
+    try {
+      this.recorder = new MediaRecorder(this.localStream, { mimeType: 'audio/webm;codecs=opus' });
+    } catch {
+      this.recorder = new MediaRecorder(this.localStream);
+    }
     this.recorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
     };
@@ -119,9 +174,10 @@ export class WebRTCCall {
   }
 
   stopRecording(): Blob | null {
-    if (!this.recorder) return null;
+    if (!this.recorder || this.recorder.state === 'inactive') return null;
     this.recorder.stop();
-    return new Blob(this.chunks, { type: 'audio/webm' });
+    const mimeType = this.recorder.mimeType || 'audio/webm';
+    return new Blob(this.chunks, { type: mimeType });
   }
 
   toggleMute(): boolean {
