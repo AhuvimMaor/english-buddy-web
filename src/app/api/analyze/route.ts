@@ -15,7 +15,7 @@ function getAdminDb() {
       process.env.FIREBASE_STORAGE_EMULATOR_HOST = 'localhost:9199';
       initializeApp({ projectId: 'demo-english-buddy' });
     } else {
-      initializeApp();
+      initializeApp({ projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '' });
     }
   }
   return getFirestore();
