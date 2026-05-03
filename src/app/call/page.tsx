@@ -17,13 +17,13 @@ function CallContent() {
   const isCallee = searchParams.get('role') === 'callee';
 
   const [partnerName, setPartnerName] = useState('');
-  const [micGranted, setMicGranted] = useState(false);
-  const [status, setStatus] = useState<'init' | 'ringing' | 'connected' | 'ended'>('init');
+  const [status, setStatus] = useState<'mic' | 'init' | 'ringing' | 'connected' | 'ended'>('mic');
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
   const [callId, setCallId] = useState(callIdParam || '');
   const [error, setError] = useState('');
   const endingRef = useRef(false);
+  const mountedRef = useRef(true);
 
   const webrtcRef = useRef<WebRTCCall | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
@@ -31,34 +31,33 @@ function CallContent() {
   const durationRef = useRef(0);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  useEffect(() => {
     if (!partnerId) return;
     getDoc(doc(db, 'users', partnerId)).then(snap => {
-      if (snap.exists()) setPartnerName(snap.data().displayName);
-    });
+      if (snap.exists() && mountedRef.current) setPartnerName(snap.data().displayName);
+    }).catch(() => {});
   }, [partnerId]);
 
   // Set user status to "inCall" on mount, restore on unmount
   useEffect(() => {
     if (!firebaseUser) return;
     const userRef = doc(db, 'users', firebaseUser.uid);
-    updateDoc(userRef, {
-      inCall: true,
-      isOnline: false,
-      updatedAt: serverTimestamp(),
-    });
+    updateDoc(userRef, { inCall: true, isOnline: false }).catch(() => {});
 
     const resetStatus = () => {
-      updateDoc(userRef, {
-        inCall: false,
-        isOnline: true,
-        updatedAt: serverTimestamp(),
-      });
+      updateDoc(userRef, { inCall: false, isOnline: true }).catch(() => {});
     };
 
     window.addEventListener('beforeunload', resetStatus);
     return () => {
       window.removeEventListener('beforeunload', resetStatus);
       resetStatus();
+      if (timerRef.current) clearInterval(timerRef.current);
+      webrtcRef.current?.cleanup();
     };
   }, [firebaseUser]);
 
@@ -66,6 +65,7 @@ function CallContent() {
   useEffect(() => {
     if (!callId) return;
     const unsub = onSnapshot(doc(db, 'calls', callId), (snap) => {
+      if (!mountedRef.current) return;
       const data = snap.data();
       if (!data) return;
       if (data.status === 'ended' && !endingRef.current) {
@@ -73,6 +73,7 @@ function CallContent() {
       }
       if (data.status === 'declined' || data.status === 'missed') {
         webrtcRef.current?.cleanup();
+        webrtcRef.current = null;
         router.push('/partners');
       }
     });
@@ -83,17 +84,22 @@ function CallContent() {
     if (endingRef.current) return;
     endingRef.current = true;
     const wasConnected = durationRef.current > 0;
-    setStatus('ended');
+    if (mountedRef.current) setStatus('ended');
     if (timerRef.current) clearInterval(timerRef.current);
 
-    const rtc = webrtcRef.current;
-    if (rtc) {
-      const blob = rtc.stopRecording();
-      if (blob && callId && firebaseUser && wasConnected) {
-        const storageRef = ref(storage, `recordings/${callId}/${firebaseUser.uid}.webm`);
-        await uploadBytes(storageRef, blob);
+    try {
+      const rtc = webrtcRef.current;
+      if (rtc) {
+        const blob = rtc.stopRecording();
+        if (blob && callId && firebaseUser && wasConnected) {
+          const storageRef = ref(storage, `recordings/${callId}/${firebaseUser.uid}.webm`);
+          await uploadBytes(storageRef, blob);
+        }
+        await rtc.cleanup();
+        webrtcRef.current = null;
       }
-      await rtc.cleanup();
+    } catch (err) {
+      console.error('[Call] Remote hangup cleanup error:', err);
     }
 
     if (wasConnected) {
@@ -105,23 +111,29 @@ function CallContent() {
 
   const initCall = useCallback(async () => {
     if (!firebaseUser || !partnerId) return;
+    if (mountedRef.current) setStatus('init');
 
     let cid = callId;
     if (!isCallee) {
-      const callRef = await addDoc(collection(db, 'calls'), {
-        callerId: firebaseUser.uid,
-        calleeId: partnerId,
-        status: 'ringing',
-        startedAt: null,
-        endedAt: null,
-        durationSeconds: null,
-        recordingPath: null,
-        transcription: null,
-        analysisStatus: 'pending',
-        createdAt: serverTimestamp(),
-      });
-      cid = callRef.id;
-      setCallId(cid);
+      try {
+        const callRef = await addDoc(collection(db, 'calls'), {
+          callerId: firebaseUser.uid,
+          calleeId: partnerId,
+          status: 'ringing',
+          startedAt: null,
+          endedAt: null,
+          durationSeconds: null,
+          recordingPath: null,
+          transcription: null,
+          analysisStatus: 'pending',
+          createdAt: serverTimestamp(),
+        });
+        cid = callRef.id;
+        if (mountedRef.current) setCallId(cid);
+      } catch (err: any) {
+        if (mountedRef.current) setError(`Failed to create call: ${err.message}`);
+        return;
+      }
     }
 
     const rtc = new WebRTCCall(cid, firebaseUser.uid);
@@ -135,12 +147,13 @@ function CallContent() {
     };
 
     rtc.onConnectionState = (state) => {
+      if (!mountedRef.current) return;
       if (state === 'connected') {
         setStatus('connected');
         rtc.startRecording();
         timerRef.current = setInterval(() => {
           durationRef.current += 1;
-          setDuration(d => d + 1);
+          if (mountedRef.current) setDuration(d => d + 1);
         }, 1000);
       } else if (state === 'disconnected' || state === 'failed') {
         handleEnd();
@@ -150,68 +163,45 @@ function CallContent() {
     try {
       await rtc.start();
     } catch (err: any) {
-      console.error('[Call] Start failed:', err);
       const msg = err?.message || err?.name || String(err);
       if (msg.includes('Permission') || msg.includes('NotAllowed')) {
-        setError('Microphone blocked. On iPhone: Settings → Safari → Microphone → Allow. Then reload this page.');
+        if (mountedRef.current) setError('Microphone blocked. On iPhone: Settings → Safari → Microphone → Allow. Then reload.');
       } else if (msg.includes('NotFound') || msg.includes('DevicesNotFound')) {
-        setError('No microphone found on this device.');
+        if (mountedRef.current) setError('No microphone found on this device.');
       } else {
-        setError(`Call setup failed: ${msg}`);
+        if (mountedRef.current) setError(`Call setup failed: ${msg}`);
       }
       return;
     }
 
     if (!isCallee) {
       await rtc.createOffer();
-      setStatus('ringing');
+      if (mountedRef.current) setStatus('ringing');
     } else {
-      await updateDoc(doc(db, 'calls', cid), {
-        status: 'active',
-        startedAt: serverTimestamp(),
-      });
-      setStatus('ringing');
+      try {
+        await updateDoc(doc(db, 'calls', cid), {
+          status: 'active',
+          startedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        console.error('[Call] Failed to update call status:', err);
+      }
+      if (mountedRef.current) setStatus('ringing');
     }
   }, [firebaseUser, partnerId, callId, isCallee]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Request mic permission first, then start call
-  useEffect(() => {
-    if (!micGranted) return;
-    initCall();
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [micGranted]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const requestMic = async () => {
+  const requestMicAndStart = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(t => t.stop());
-      setMicGranted(true);
+      await initCall();
     } catch (err: any) {
-      const msg = err?.message || err?.name || String(err);
-      console.error('[Call] Mic request failed:', msg);
-      if (msg.includes('NotAllowed') || msg.includes('Permission')) {
-        setError('Microphone blocked by your browser. On iPhone: go to Settings → Safari → Microphone → Allow. On Chrome: tap the lock icon in the address bar → Site settings → Microphone → Allow.');
-      } else {
-        setError(`Microphone error: ${msg}`);
-      }
+      if (mountedRef.current) setError(`Call failed: ${err.message}`);
     }
   };
-
-  // Auto-request on mount
-  useEffect(() => {
-    navigator.permissions?.query({ name: 'microphone' as PermissionName }).then(result => {
-      if (result.state === 'granted') {
-        setMicGranted(true);
-      }
-    }).catch(() => {});
-  }, []);
 
   const handleEnd = async () => {
     if (endingRef.current) return;
     endingRef.current = true;
-    setStatus('ended');
+    if (mountedRef.current) setStatus('ended');
     if (timerRef.current) clearInterval(timerRef.current);
 
     const wasConnected = durationRef.current > 0;
@@ -260,7 +250,7 @@ function CallContent() {
     return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
   };
 
-  if (!micGranted && !error) {
+  if (status === 'mic' && !error) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-800 text-white p-8">
         <div className="text-center max-w-sm">
@@ -270,10 +260,10 @@ function CallContent() {
             English Buddy needs your microphone to make voice calls. Tap the button below and allow access when prompted.
           </p>
           <button
-            onClick={requestMic}
-            className="w-full py-4 bg-blue-500 text-white font-semibold rounded-xl hover:bg-blue-600 transition text-lg"
+            onClick={requestMicAndStart}
+            className="w-full py-4 bg-blue-500 text-white font-semibold rounded-xl hover:bg-blue-600 transition text-lg active:scale-95"
           >
-            Allow Microphone
+            Allow Microphone & Call
           </button>
           <button
             onClick={() => router.push('/partners')}
@@ -308,13 +298,13 @@ function CallContent() {
         </div>
         <h2 className="text-2xl font-bold">{partnerName || 'Connecting...'}</h2>
         <p className="text-white/50 mt-1">
-          {error ? '' : status === 'init' && 'Setting up...'}
+          {!error && status === 'init' && 'Setting up...'}
           {status === 'ringing' && (isCallee ? 'Connecting...' : 'Calling...')}
           {status === 'connected' && 'Connected'}
           {status === 'ended' && 'Call ended'}
         </p>
         {error && (
-          <div className="mt-4 bg-red-500/20 text-red-300 px-4 py-3 rounded-xl text-sm max-w-xs">
+          <div className="mt-4 bg-red-500/20 text-red-300 px-4 py-3 rounded-xl text-sm max-w-xs mx-auto">
             {error}
             <button onClick={() => router.push('/partners')} className="block mt-2 text-white underline">
               Go back
@@ -326,7 +316,7 @@ function CallContent() {
       <div className="flex items-center gap-8 pb-12">
         <button
           onClick={handleMute}
-          className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition ${
+          className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition active:scale-90 ${
             muted ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'
           }`}
         >
@@ -335,9 +325,9 @@ function CallContent() {
 
         <button
           onClick={handleEnd}
-          className="w-18 h-18 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-3xl p-5 transition"
+          className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-3xl transition active:scale-90"
         >
-          📞
+          ✕
         </button>
 
         <button className="w-16 h-16 rounded-full bg-white/10 hover:bg-white/15 flex items-center justify-center text-2xl transition">

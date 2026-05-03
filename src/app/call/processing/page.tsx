@@ -24,6 +24,7 @@ function ProcessingContent() {
   const callId = searchParams.get('callId') || '';
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('pending');
   const [failed, setFailed] = useState(false);
+  const [failMessage, setFailMessage] = useState('');
   const triggeredRef = useRef(false);
 
   // Trigger analysis API
@@ -35,9 +36,18 @@ function ProcessingContent() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ callId }),
-    }).catch((err) => {
-      console.error('Analysis trigger failed:', err);
-    });
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setFailed(true);
+          setFailMessage(data.error || `Server error: ${res.status}`);
+        }
+      })
+      .catch((err) => {
+        setFailed(true);
+        setFailMessage(err.message || 'Network error');
+      });
   }, [callId]);
 
   // Listen for status updates
@@ -53,6 +63,7 @@ function ProcessingContent() {
 
       if (status === 'failed') {
         setFailed(true);
+        setFailMessage('Analysis failed on server');
       }
 
       if (status === 'complete') {
@@ -64,6 +75,17 @@ function ProcessingContent() {
 
     return unsub;
   }, [callId, router]);
+
+  // Timeout after 2 minutes
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (analysisStatus !== 'complete' && !failed) {
+        setFailed(true);
+        setFailMessage('Analysis timed out. Check History later for results.');
+      }
+    }, 120000);
+    return () => clearTimeout(timeout);
+  }, [analysisStatus, failed]);
 
   const currentStep = getStepIndex(analysisStatus);
   const progress = failed ? 100 : ((currentStep + 1) / STEPS.length) * 100;
@@ -84,7 +106,7 @@ function ProcessingContent() {
           </h1>
           <p className="text-gray-500 mt-1 text-sm">
             {failed
-              ? 'Something went wrong. Try again later.'
+              ? failMessage
               : analysisStatus === 'complete'
                 ? 'Redirecting to your report...'
                 : 'This usually takes 1-2 minutes'}
@@ -138,21 +160,15 @@ function ProcessingContent() {
         </div>
 
         <div className="text-center mt-6">
-          {failed ? (
-            <button
-              onClick={() => router.push('/partners')}
-              className="px-6 py-2 bg-blue-500 text-white font-semibold rounded-xl hover:bg-blue-600 transition"
-            >
-              Back to Partners
-            </button>
-          ) : analysisStatus !== 'complete' ? (
-            <button
-              onClick={() => router.push('/partners')}
-              className="text-sm text-gray-400 hover:text-gray-600 transition"
-            >
-              Skip - I&apos;ll check the report later
-            </button>
-          ) : null}
+          <button
+            onClick={() => router.push('/partners')}
+            className={failed
+              ? "px-6 py-2 bg-blue-500 text-white font-semibold rounded-xl hover:bg-blue-600 transition"
+              : "text-sm text-gray-400 hover:text-gray-600 transition"
+            }
+          >
+            {failed ? 'Back to Partners' : "Skip - I'll check the report later"}
+          </button>
         </div>
       </div>
     </div>
