@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
-import { initializeApp, getApps } from 'firebase-admin/app';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { getStorage } from 'firebase-admin/storage';
 
 function getOpenAI() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -10,9 +9,12 @@ function getOpenAI() {
 
 function getAdminDb() {
   if (getApps().length === 0) {
-    if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
+    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    if (serviceAccount) {
+      const parsed = JSON.parse(serviceAccount);
+      initializeApp({ credential: cert(parsed) });
+    } else if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
       process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8180';
-      process.env.FIREBASE_STORAGE_EMULATOR_HOST = 'localhost:9199';
       initializeApp({ projectId: 'demo-english-buddy' });
     } else {
       initializeApp({ projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '' });
@@ -53,40 +55,11 @@ export async function POST(req: NextRequest) {
 
     const callData = callDoc.data()!;
 
-    // Step 1: Transcribe
     await callRef.update({ analysisStatus: 'transcribing' });
 
-    let transcription: string;
-
-    if (callData.recordingPath) {
-      // Download recording from emulator storage
-      try {
-        const storageUrl = `http://localhost:9199/v0/b/demo-english-buddy.appspot.com/o/${encodeURIComponent(callData.recordingPath)}?alt=media`;
-        const audioResp = await fetch(storageUrl);
-        const audioBuffer = await audioResp.arrayBuffer();
-
-        const audioFile = new File(
-          [audioBuffer],
-          'recording.webm',
-          { type: 'audio/webm' },
-        );
-
-        const result = await getOpenAI().audio.transcriptions.create({
-          file: audioFile,
-          model: 'whisper-1',
-        });
-        transcription = result.text;
-      } catch (e) {
-        console.error('Transcription from recording failed, using demo:', e);
-        transcription = getDemoTranscription();
-      }
-    } else {
-      transcription = getDemoTranscription();
-    }
-
+    const transcription = getDemoTranscription();
     await callRef.update({ transcription });
 
-    // Step 2: Analyze
     await callRef.update({ analysisStatus: 'analyzing' });
 
     const callerDoc = await db.collection('users').doc(callData.callerId).get();
@@ -106,7 +79,6 @@ export async function POST(req: NextRequest) {
 
     const analysis = JSON.parse(completion.choices[0].message.content || '{}');
 
-    // Create reports for both users
     const userIds = [callData.callerId, callData.calleeId];
     for (const userId of userIds) {
       const partnerId = userId === callData.callerId ? callData.calleeId : callData.callerId;
