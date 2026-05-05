@@ -210,12 +210,19 @@ function CallContent() {
       const rtc = webrtcRef.current;
       if (rtc) {
         const blob = rtc.stopRecording();
-        if (blob && callId && firebaseUser && wasConnected) {
-          const storageRef = ref(storage, `recordings/${callId}/${firebaseUser.uid}.webm`);
-          await uploadBytes(storageRef, blob);
-          await updateDoc(doc(db, 'calls', callId), {
-            recordingPath: `recordings/${callId}/${firebaseUser.uid}.webm`,
-          });
+        console.log('[Call] Recording blob:', blob ? `${blob.size} bytes, type=${blob.type}` : 'null');
+        if (blob && blob.size > 0 && callId && firebaseUser) {
+          try {
+            const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+            const path = `recordings/${callId}/${firebaseUser.uid}.${ext}`;
+            const storageRef = ref(storage, path);
+            console.log('[Call] Uploading recording to:', path);
+            await uploadBytes(storageRef, blob);
+            await updateDoc(doc(db, 'calls', callId), { recordingPath: path });
+            console.log('[Call] Recording uploaded successfully');
+          } catch (uploadErr: any) {
+            console.error('[Call] Recording upload failed:', uploadErr.message);
+          }
         }
         await rtc.cleanup();
         webrtcRef.current = null;
