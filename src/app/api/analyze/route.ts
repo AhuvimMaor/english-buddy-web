@@ -60,7 +60,29 @@ export async function POST(req: NextRequest) {
 
     await callRef.update({ analysisStatus: 'transcribing' });
 
-    const transcription = getDemoTranscription();
+    let transcription: string;
+
+    if (callData.recordingPath) {
+      try {
+        const bucket = require('firebase-admin/storage').getStorage().bucket(`${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`);
+        const file = bucket.file(callData.recordingPath);
+        const [buffer] = await file.download();
+        const audioFile = new File([buffer], 'audio.webm', { type: 'audio/webm' });
+        const result = await getOpenAI().audio.transcriptions.create({
+          file: audioFile,
+          model: 'whisper-1',
+        });
+        transcription = result.text;
+      } catch (e: any) {
+        console.error('Transcription failed:', e.message);
+        await callRef.update({ analysisStatus: 'failed' });
+        return NextResponse.json({ error: 'Transcription failed: ' + e.message }, { status: 500 });
+      }
+    } else {
+      await callRef.update({ analysisStatus: 'failed' });
+      return NextResponse.json({ error: 'No recording found for this call' }, { status: 400 });
+    }
+
     await callRef.update({ transcription });
 
     await callRef.update({ analysisStatus: 'analyzing' });
@@ -108,20 +130,3 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function getDemoTranscription(): string {
-  return `Speaker 1: Hi, how are you today?
-Speaker 2: I'm good, toda raba. I want to talk about my new job.
-Speaker 1: That sounds great! What do you do?
-Speaker 2: I'm working in the hi-tech, you know, like a programmer. I'm doing this for three years already.
-Speaker 1: Oh nice, so you've been doing it for three years.
-Speaker 2: Yes, exactly. Sometimes I have difficulty to explain things in English. Like yesterday, I needed to do a mitzuga... how you say... presentation?
-Speaker 1: Yes, a presentation!
-Speaker 2: Right, I maked a presentation for my team. It was very excited.
-Speaker 1: You mean you made a presentation and it was very exciting?
-Speaker 2: Ken, yes. Also I don't know how to say tachzit... like the plan for the future?
-Speaker 1: A forecast? Or maybe a roadmap?
-Speaker 2: Yes! Roadmap! I always forget this word. My manager asked me to prepare the roadmap for next quarter.
-Speaker 1: Your English is getting better! Just remember, it's "I've been doing this for three years" not "I'm doing this for three years."
-Speaker 2: Toda, thanks! I will try to remember. English is more easy than I thought.
-Speaker 1: Easier, not "more easy." But you're doing great!`;
-}

@@ -160,12 +160,33 @@ export class WebRTCCall {
   }
 
   startRecording() {
-    if (!this.localStream) return;
+    if (!this.localStream) {
+      console.warn('[WebRTC] No local stream, cannot record');
+      return;
+    }
     this.chunks = [];
+    const mimeTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+      '',
+    ];
+    let selectedMime = '';
+    for (const mime of mimeTypes) {
+      if (!mime || MediaRecorder.isTypeSupported(mime)) {
+        selectedMime = mime;
+        break;
+      }
+    }
     try {
-      this.recorder = new MediaRecorder(this.localStream, { mimeType: 'audio/webm;codecs=opus' });
-    } catch {
-      this.recorder = new MediaRecorder(this.localStream);
+      this.recorder = selectedMime
+        ? new MediaRecorder(this.localStream, { mimeType: selectedMime })
+        : new MediaRecorder(this.localStream);
+      console.log('[WebRTC] Recording started, mimeType:', this.recorder.mimeType);
+    } catch (e) {
+      console.error('[WebRTC] MediaRecorder creation failed:', e);
+      return;
     }
     this.recorder.ondataavailable = (e) => {
       if (e.data.size > 0) this.chunks.push(e.data);
@@ -174,9 +195,17 @@ export class WebRTCCall {
   }
 
   stopRecording(): Blob | null {
-    if (!this.recorder || this.recorder.state === 'inactive') return null;
-    this.recorder.stop();
+    if (!this.recorder || this.recorder.state === 'inactive') {
+      console.log('[WebRTC] No active recorder to stop, chunks:', this.chunks.length);
+      if (this.chunks.length > 0) {
+        return new Blob(this.chunks, { type: 'audio/webm' });
+      }
+      return null;
+    }
     const mimeType = this.recorder.mimeType || 'audio/webm';
+    this.recorder.stop();
+    console.log('[WebRTC] Recording stopped, chunks:', this.chunks.length, 'mime:', mimeType);
+    if (this.chunks.length === 0) return null;
     return new Blob(this.chunks, { type: mimeType });
   }
 
