@@ -67,7 +67,9 @@ export async function POST(req: NextRequest) {
         const bucket = require('firebase-admin/storage').getStorage().bucket(`${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`);
         const file = bucket.file(callData.recordingPath);
         const [buffer] = await file.download();
-        const audioFile = new File([buffer], 'audio.webm', { type: 'audio/webm' });
+        const ext = callData.recordingPath.split('.').pop() || 'webm';
+        const mimeMap: Record<string, string> = { webm: 'audio/webm', mp3: 'audio/mpeg', mp4: 'audio/mp4', ogg: 'audio/ogg', m4a: 'audio/mp4' };
+        const audioFile = new File([buffer], `audio.${ext}`, { type: mimeMap[ext] || 'audio/webm' });
         const result = await getOpenAI().audio.transcriptions.create({
           file: audioFile,
           model: 'whisper-1',
