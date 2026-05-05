@@ -11,7 +11,10 @@ function getAdminDb() {
   if (getApps().length === 0) {
     const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
     if (serviceAccount) {
-      const parsed = JSON.parse(serviceAccount);
+      const decoded = serviceAccount.startsWith('{')
+        ? serviceAccount
+        : Buffer.from(serviceAccount, 'base64').toString('utf-8');
+      const parsed = JSON.parse(decoded);
       initializeApp({ credential: cert(parsed) });
     } else if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
       process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8180';
