@@ -29,15 +29,25 @@ function getAdminDb() {
 const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation where the user was practicing English.
 
 Analyze the transcription and produce a JSON report with:
-1. grammarMistakes: array of {original, corrected, explanation}
-   - Identify grammatical errors in the English portions
-   - Provide the corrected version and a brief explanation of the rule
-2. hebrewWords: array of {hebrew, english, context}
-   - Identify any Hebrew words the user used (they couldn't find the English word)
+
+1. transcript: array of {speaker: "user"|"partner", text: string, correction: string|null, correctionExplanation: string|null}
+   - Break the conversation into individual sentences/phrases
+   - For each line the user said that has a grammar/vocabulary error, provide the corrected version and brief explanation
+   - Lines without errors should have correction: null
+   - Partner lines should have correction: null
+
+2. grammarMistakes: array of {original, corrected, explanation}
+   - Summary of all grammar errors found
+
+3. hebrewWords: array of {hebrew, english, context}
+   - Any Hebrew words the user used (couldn't find the English word)
    - Provide the English translation and the sentence context
-3. fluencyScore: number 1-10 rating of overall fluency
-4. summary: 2-3 sentences of overall feedback, encouraging tone
-5. tips: array of 3 actionable suggestions for improvement
+
+4. fluencyScore: number 1-10 rating of overall fluency
+
+5. summary: 2-3 sentences of overall feedback, encouraging tone
+
+6. tips: array of 3 actionable suggestions for improvement
 
 Output valid JSON only. No markdown, no code fences.`;
 
@@ -114,6 +124,7 @@ export async function POST(req: NextRequest) {
         userId,
         partnerId,
         callDuration: callData.durationSeconds || 0,
+        transcript: analysis.transcript || [],
         grammarMistakes: analysis.grammarMistakes || [],
         hebrewWords: analysis.hebrewWords || [],
         fluencyScore: analysis.fluencyScore || null,

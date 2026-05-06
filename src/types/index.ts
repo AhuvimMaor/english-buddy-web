@@ -57,12 +57,20 @@ export interface HebrewWord {
   context: string;
 }
 
+export interface TranscriptLine {
+  speaker: 'user' | 'partner';
+  text: string;
+  correction: string | null;
+  correctionExplanation: string | null;
+}
+
 export interface Report {
   id: string;
   callId: string;
   userId: string;
   partnerId: string;
   callDuration: number;
+  transcript: TranscriptLine[];
   grammarMistakes: GrammarMistake[];
   hebrewWords: HebrewWord[];
   fluencyScore: number | null;

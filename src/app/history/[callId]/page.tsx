@@ -6,7 +6,45 @@ import { db } from '@/lib/firebase';
 import { collection, query, where, limit, onSnapshot } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Report } from '@/types';
+import { Report, TranscriptLine } from '@/types';
+
+function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
+  if (!transcript || transcript.length === 0) return null;
+
+  return (
+    <div className="mb-6">
+      <h2 className="text-lg font-bold text-gray-900 mb-3">📝 Conversation</h2>
+      <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+        {transcript.map((line, i) => (
+          <div key={i} className={`${line.speaker === 'user' ? 'pl-0' : 'pl-4'}`}>
+            <div className="flex items-start gap-2">
+              <span className={`text-xs font-bold mt-1 flex-shrink-0 ${
+                line.speaker === 'user' ? 'text-blue-500' : 'text-gray-400'
+              }`}>
+                {line.speaker === 'user' ? 'You' : 'Partner'}
+              </span>
+              <div className="flex-1">
+                <p className={`text-sm ${
+                  line.correction ? 'text-red-500 line-through' : 'text-gray-700'
+                }`}>
+                  {line.text}
+                </p>
+                {line.correction && (
+                  <div className="mt-1">
+                    <p className="text-sm text-green-600 font-medium">✓ {line.correction}</p>
+                    {line.correctionExplanation && (
+                      <p className="text-xs text-gray-400 mt-0.5">{line.correctionExplanation}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function ReportPage() {
   const { firebaseUser } = useAuthContext();
@@ -36,7 +74,7 @@ export default function ReportPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen" style={{background: '#f8f9fa'}}>
         <NavBar />
         <div className="flex justify-center py-16">
           <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
@@ -47,7 +85,7 @@ export default function ReportPage() {
 
   if (!report) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen" style={{background: '#f8f9fa'}}>
         <NavBar />
         <div className="text-center py-16">
           <p className="text-5xl mb-4">⏳</p>
@@ -59,7 +97,7 @@ export default function ReportPage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen" style={{background: '#f8f9fa'}}>
       <NavBar />
       <main className="max-w-2xl mx-auto px-4 py-6">
         <div className="text-center mb-6">
@@ -74,10 +112,12 @@ export default function ReportPage() {
           <p className="text-gray-700 leading-relaxed">{report.summary}</p>
         </div>
 
-        {report.grammarMistakes.length > 0 && (
+        <TranscriptView transcript={report.transcript} />
+
+        {report.grammarMistakes?.length > 0 && (
           <div className="mb-6">
             <h2 className="text-lg font-bold text-gray-900 mb-3">
-              Grammar ({report.grammarMistakes.length})
+              ❌ Grammar Mistakes ({report.grammarMistakes.length})
             </h2>
             <div className="space-y-3">
               {report.grammarMistakes.map((m, i) => (
@@ -92,10 +132,10 @@ export default function ReportPage() {
           </div>
         )}
 
-        {report.hebrewWords.length > 0 && (
+        {report.hebrewWords?.length > 0 && (
           <div className="mb-6">
             <h2 className="text-lg font-bold text-gray-900 mb-3">
-              Hebrew Words ({report.hebrewWords.length})
+              🇮🇱 Hebrew Words ({report.hebrewWords.length})
             </h2>
             <div className="space-y-3">
               {report.hebrewWords.map((w, i) => (
@@ -112,9 +152,9 @@ export default function ReportPage() {
           </div>
         )}
 
-        {report.tips.length > 0 && (
+        {report.tips?.length > 0 && (
           <div className="mb-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-3">Tips</h2>
+            <h2 className="text-lg font-bold text-gray-900 mb-3">💡 Tips</h2>
             <div className="space-y-2">
               {report.tips.map((tip, i) => (
                 <div key={i} className="flex gap-3 bg-white rounded-xl border border-gray-200 p-4">
