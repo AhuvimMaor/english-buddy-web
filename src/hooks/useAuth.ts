@@ -45,6 +45,9 @@ export function useAuth() {
     const userRef = doc(db, 'users', firebaseUser.uid);
     let resetDone = false;
 
+    // Set online when app is active
+    updateDoc(userRef, { isOnline: true, inCall: false }).catch(() => {});
+
     const unsub = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
@@ -57,7 +60,31 @@ export function useAuth() {
       }
       setLoading(false);
     });
-    return unsub;
+
+    // Set offline when user leaves or hides app
+    const goOffline = () => {
+      updateDoc(userRef, { isOnline: false }).catch(() => {});
+    };
+    const goOnline = () => {
+      updateDoc(userRef, { isOnline: true }).catch(() => {});
+    };
+    const handleVisibility = () => {
+      if (document.hidden) {
+        goOffline();
+      } else {
+        goOnline();
+      }
+    };
+
+    window.addEventListener('beforeunload', goOffline);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.removeEventListener('beforeunload', goOffline);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      goOffline();
+      unsub();
+    };
   }, [firebaseUser]);
 
   const signIn = useCallback(async (email: string, password: string) => {
