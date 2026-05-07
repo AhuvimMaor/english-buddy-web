@@ -30,6 +30,7 @@ const ICE_SERVERS: RTCConfiguration = {
 export class WebRTCCall {
   private pc: RTCPeerConnection;
   private localStream: MediaStream | null = null;
+  private remoteStream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
   private callId: string;
@@ -37,6 +38,8 @@ export class WebRTCCall {
   private unsubSignaling: (() => void) | null = null;
   private pendingCandidates: RTCIceCandidateInit[] = [];
   private hasRemoteDescription = false;
+  private audioContext: AudioContext | null = null;
+  private mixedStream: MediaStream | null = null;
 
   onRemoteStream: ((stream: MediaStream) => void) | null = null;
   onConnectionState: ((state: RTCPeerConnectionState) => void) | null = null;
@@ -64,8 +67,9 @@ export class WebRTCCall {
     };
 
     this.pc.ontrack = (e) => {
-      if (e.streams[0] && this.onRemoteStream) {
-        this.onRemoteStream(e.streams[0]);
+      if (e.streams[0]) {
+        this.remoteStream = e.streams[0];
+        this.onRemoteStream?.(e.streams[0]);
       }
     };
 
@@ -165,13 +169,32 @@ export class WebRTCCall {
       return;
     }
     this.chunks = [];
-    const mimeTypes = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/mp4',
-      'audio/ogg;codecs=opus',
-      '',
-    ];
+
+    // Mix local + remote audio into one stream
+    let streamToRecord: MediaStream;
+    try {
+      this.audioContext = new AudioContext();
+      const dest = this.audioContext.createMediaStreamDestination();
+
+      const localSource = this.audioContext.createMediaStreamSource(this.localStream);
+      localSource.connect(dest);
+
+      if (this.remoteStream) {
+        const remoteSource = this.audioContext.createMediaStreamSource(this.remoteStream);
+        remoteSource.connect(dest);
+        console.log('[WebRTC] Recording both local + remote audio');
+      } else {
+        console.log('[WebRTC] Recording local only (no remote stream yet)');
+      }
+
+      this.mixedStream = dest.stream;
+      streamToRecord = dest.stream;
+    } catch (e) {
+      console.warn('[WebRTC] AudioContext mixing failed, recording local only:', e);
+      streamToRecord = this.localStream;
+    }
+
+    const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', ''];
     let selectedMime = '';
     for (const mime of mimeTypes) {
       if (!mime || MediaRecorder.isTypeSupported(mime)) {
@@ -181,8 +204,8 @@ export class WebRTCCall {
     }
     try {
       this.recorder = selectedMime
-        ? new MediaRecorder(this.localStream, { mimeType: selectedMime })
-        : new MediaRecorder(this.localStream);
+        ? new MediaRecorder(streamToRecord, { mimeType: selectedMime })
+        : new MediaRecorder(streamToRecord);
       console.log('[WebRTC] Recording started, mimeType:', this.recorder.mimeType);
     } catch (e) {
       console.error('[WebRTC] MediaRecorder creation failed:', e);
