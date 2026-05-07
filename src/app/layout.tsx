@@ -1,16 +1,10 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/Providers";
 
-const geist = Geist({
-  variable: "--font-geist",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "English Buddy",
-  description: "Practice English with real people. Get AI-powered feedback.",
+  title: "English Buddy - Practice English with Real People",
+  description: "Call partners, practice English, get AI-powered grammar reports.",
 };
 
 export default function RootLayout({
@@ -19,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geist.variable} h-full`} style={{colorScheme: 'light'}} data-theme="light">
-      <body className="min-h-full font-sans antialiased" style={{background: '#f8f9fa', color: '#1c1e21'}}>
+    <html lang="en" style={{colorScheme: 'light'}}>
+      <body>
         <Providers>{children}</Providers>
       </body>
     </html>

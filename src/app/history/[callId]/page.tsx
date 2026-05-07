@@ -8,32 +8,64 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Report, TranscriptLine } from '@/types';
 
+function ScoreRing({ score }: { score: number | null }) {
+  const s = score || 0;
+  const circumference = 2 * Math.PI * 42;
+  const offset = circumference - (s / 10) * circumference;
+  const color = s >= 7 ? 'var(--accent-green)' : s >= 5 ? 'var(--accent-amber)' : 'var(--accent-coral)';
+
+  return (
+    <div className="relative w-28 h-28 mx-auto animate-scale-in">
+      <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="42" stroke="#f3f4f6" strokeWidth="8" fill="none" />
+        <circle
+          cx="50" cy="50" r="42"
+          stroke={color}
+          strokeWidth="8"
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className="transition-all duration-1000 ease-out"
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-3xl font-bold text-[var(--text-primary)]">{s}</span>
+        <span className="text-[10px] text-[var(--text-muted)] font-medium">/10</span>
+      </div>
+    </div>
+  );
+}
+
 function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
   if (!transcript || transcript.length === 0) return null;
 
   return (
-    <div className="mb-6">
-      <h2 className="text-lg font-bold text-gray-900 mb-3">📝 Conversation</h2>
-      <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+    <div className="mb-6 animate-fade-in-up stagger-3">
+      <h2 className="text-base font-bold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+        <span className="w-7 h-7 rounded-lg bg-[var(--accent-blue-light)] flex items-center justify-center text-sm">📝</span>
+        Conversation
+      </h2>
+      <div className="bg-white rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] p-4 space-y-3">
         {transcript.map((line, i) => (
-          <div key={i} className={`${line.speaker === 'user' ? 'pl-0' : 'pl-4'}`}>
+          <div key={i} className={line.speaker === 'partner' ? 'opacity-60' : ''}>
             <div className="flex items-start gap-2">
-              <span className={`text-xs font-bold mt-1 flex-shrink-0 ${
-                line.speaker === 'user' ? 'text-blue-500' : 'text-gray-400'
+              <span className={`text-[10px] font-bold mt-1 flex-shrink-0 uppercase tracking-wider ${
+                line.speaker === 'user' ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'
               }`}>
-                {line.speaker === 'user' ? 'You' : 'Partner'}
+                {line.speaker === 'user' ? 'You' : 'Them'}
               </span>
               <div className="flex-1">
-                <p className={`text-sm ${
-                  line.correction ? 'text-red-500 line-through' : 'text-gray-700'
+                <p className={`text-sm leading-relaxed ${
+                  line.correction ? 'text-[var(--accent-coral)] line-through decoration-1' : 'text-[var(--text-primary)]'
                 }`}>
                   {line.text}
                 </p>
                 {line.correction && (
-                  <div className="mt-1">
-                    <p className="text-sm text-green-600 font-medium">✓ {line.correction}</p>
+                  <div className="mt-1.5 bg-[var(--accent-green-light)] rounded-lg px-3 py-2">
+                    <p className="text-sm text-[var(--accent-green)] font-medium">✓ {line.correction}</p>
                     {line.correctionExplanation && (
-                      <p className="text-xs text-gray-400 mt-0.5">{line.correctionExplanation}</p>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-1">{line.correctionExplanation}</p>
                     )}
                   </div>
                 )}
@@ -55,18 +87,14 @@ export default function ReportPage() {
 
   useEffect(() => {
     if (!firebaseUser || !callId) return;
-
     const q = query(
       collection(db, 'reports'),
       where('callId', '==', callId),
       where('userId', '==', firebaseUser.uid),
       limit(1),
     );
-
     const unsub = onSnapshot(q, snap => {
-      if (!snap.empty) {
-        setReport({ id: snap.docs[0].id, ...snap.docs[0].data() } as Report);
-      }
+      if (!snap.empty) setReport({ id: snap.docs[0].id, ...snap.docs[0].data() } as Report);
       setLoading(false);
     });
     return unsub;
@@ -74,92 +102,94 @@ export default function ReportPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen" style={{background: '#f8f9fa'}}>
-        <NavBar />
-        <div className="flex justify-center py-16">
-          <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
-        </div>
+      <div className="min-h-screen bg-warm-gradient flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-4 border-[var(--accent-coral)] border-t-transparent rounded-full" />
       </div>
     );
   }
 
   if (!report) {
     return (
-      <div className="min-h-screen" style={{background: '#f8f9fa'}}>
+      <div className="min-h-screen bg-warm-gradient bg-dots pb-20">
         <NavBar />
-        <div className="text-center py-16">
-          <p className="text-5xl mb-4">⏳</p>
-          <p className="text-lg font-semibold text-gray-900">Report not ready yet</p>
-          <p className="text-gray-500 mt-1">We&apos;re still analyzing your conversation</p>
+        <div className="text-center py-20 animate-fade-in">
+          <div className="text-5xl mb-4 animate-float">⏳</div>
+          <p className="text-lg font-semibold text-[var(--text-primary)]">Report not ready</p>
+          <p className="text-sm text-[var(--text-muted)] mt-1">Still analyzing your conversation</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" style={{background: '#f8f9fa'}}>
+    <div className="min-h-screen bg-warm-gradient bg-dots pb-20">
       <NavBar />
-      <main className="max-w-2xl mx-auto px-4 py-6">
-        <div className="text-center mb-6">
-          <div className="w-24 h-24 rounded-full bg-blue-500 flex items-center justify-center mx-auto mb-3">
-            <span className="text-4xl font-bold text-white">{report.fluencyScore || '-'}</span>
-          </div>
-          <p className="text-sm text-gray-400">/ 10</p>
-          <p className="text-sm text-gray-500 mt-1">{Math.floor(report.callDuration / 60)} min call</p>
+      <main className="px-5 pt-10 max-w-lg mx-auto">
+        {/* Score */}
+        <div className="text-center mb-6 animate-fade-in-up">
+          <ScoreRing score={report.fluencyScore} />
+          <p className="text-sm text-[var(--text-muted)] mt-3">
+            {Math.floor(report.callDuration / 60)} min conversation
+          </p>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
-          <p className="text-gray-700 leading-relaxed">{report.summary}</p>
+        {/* Summary */}
+        <div className="bg-white rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] p-4 mb-6 animate-fade-in-up stagger-2">
+          <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{report.summary}</p>
         </div>
 
+        {/* Transcript */}
         <TranscriptView transcript={report.transcript} />
 
+        {/* Grammar */}
         {report.grammarMistakes?.length > 0 && (
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-3">
-              ❌ Grammar Mistakes ({report.grammarMistakes.length})
+          <div className="mb-6 animate-fade-in-up stagger-4">
+            <h2 className="text-base font-bold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+              <span className="w-7 h-7 rounded-lg bg-[var(--accent-coral-light)] flex items-center justify-center text-sm">❌</span>
+              Mistakes ({report.grammarMistakes.length})
             </h2>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {report.grammarMistakes.map((m, i) => (
-                <div key={i} className="bg-white rounded-xl border border-gray-200 p-4">
-                  <p className="text-red-500 italic">&ldquo;{m.original}&rdquo;</p>
-                  <p className="text-center text-gray-400 my-1">↓</p>
-                  <p className="text-green-600 font-semibold">&ldquo;{m.corrected}&rdquo;</p>
-                  <p className="text-sm text-gray-500 mt-2">{m.explanation}</p>
+                <div key={i} className="bg-white rounded-[var(--radius-sm)] shadow-[var(--shadow-sm)] p-4">
+                  <p className="text-sm text-[var(--accent-coral)] line-through decoration-1">{m.original}</p>
+                  <p className="text-sm text-[var(--accent-green)] font-medium mt-1">✓ {m.corrected}</p>
+                  <p className="text-[11px] text-[var(--text-muted)] mt-2">{m.explanation}</p>
                 </div>
               ))}
             </div>
           </div>
         )}
 
+        {/* Hebrew words */}
         {report.hebrewWords?.length > 0 && (
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-3">
-              🇮🇱 Hebrew Words ({report.hebrewWords.length})
+          <div className="mb-6 animate-fade-in-up stagger-5">
+            <h2 className="text-base font-bold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+              <span className="w-7 h-7 rounded-lg bg-[var(--accent-purple-light)] flex items-center justify-center text-sm">🇮🇱</span>
+              Words to Learn ({report.hebrewWords.length})
             </h2>
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-2">
               {report.hebrewWords.map((w, i) => (
-                <div key={i} className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg font-bold">{w.hebrew}</span>
-                    <span className="text-gray-400">→</span>
-                    <span className="text-lg font-bold text-blue-500">{w.english}</span>
-                  </div>
-                  <p className="text-sm text-gray-500 italic mt-1">&ldquo;{w.context}&rdquo;</p>
+                <div key={i} className="bg-white rounded-[var(--radius-sm)] shadow-[var(--shadow-sm)] p-4 flex items-center gap-3">
+                  <span className="text-lg font-bold text-[var(--text-primary)]">{w.hebrew}</span>
+                  <span className="text-[var(--text-muted)]">→</span>
+                  <span className="text-sm font-semibold text-[var(--accent-blue)]">{w.english}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
+        {/* Tips */}
         {report.tips?.length > 0 && (
           <div className="mb-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-3">💡 Tips</h2>
+            <h2 className="text-base font-bold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+              <span className="w-7 h-7 rounded-lg bg-[var(--accent-amber-light)] flex items-center justify-center text-sm">💡</span>
+              Tips
+            </h2>
             <div className="space-y-2">
               {report.tips.map((tip, i) => (
-                <div key={i} className="flex gap-3 bg-white rounded-xl border border-gray-200 p-4">
-                  <span>💡</span>
-                  <p className="text-gray-700">{tip}</p>
+                <div key={i} className="bg-white rounded-[var(--radius-sm)] shadow-[var(--shadow-sm)] p-4">
+                  <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{tip}</p>
                 </div>
               ))}
             </div>

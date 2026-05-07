@@ -1,16 +1,54 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
 
 :root {
-  --background: #f8f9fa;
-  --foreground: #1c1e21;
-  color-scheme: light;
+  --bg-primary: #FAFBFC;
+  --bg-warm: #FFF8F3;
+  --bg-card: #FFFFFF;
+  --surface-elevated: #FFFFFF;
+
+  --text-primary: #1A1D26;
+  --text-secondary: #5E6278;
+  --text-muted: #9CA3B4;
+
+  --accent-coral: #FF6B6B;
+  --accent-coral-light: #FFF0F0;
+  --accent-blue: #4C7CFF;
+  --accent-blue-light: #EEF3FF;
+  --accent-green: #2ED477;
+  --accent-green-light: #EDFCF2;
+  --accent-amber: #FFB547;
+  --accent-amber-light: #FFF7E6;
+  --accent-purple: #8B5CF6;
+  --accent-purple-light: #F3EEFF;
+
+  --gradient-warm: linear-gradient(135deg, #FF6B6B 0%, #FFB547 100%);
+  --gradient-cool: linear-gradient(135deg, #4C7CFF 0%, #8B5CF6 100%);
+  --gradient-fresh: linear-gradient(135deg, #2ED477 0%, #4C7CFF 100%);
+
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 2px 8px rgba(26, 29, 38, 0.04);
+  --shadow-md: 0 4px 16px rgba(26, 29, 38, 0.08);
+  --shadow-lg: 0 8px 32px rgba(26, 29, 38, 0.12);
+  --shadow-glow-coral: 0 4px 24px rgba(255, 107, 107, 0.3);
+  --shadow-glow-blue: 0 4px 24px rgba(76, 124, 255, 0.3);
+
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'DM Mono', monospace;
+
+  color-scheme: light !important;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
 html {
@@ -18,7 +56,90 @@ html {
 }
 
 body {
-  background: #f8f9fa !important;
-  color: #1c1e21 !important;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.animate-fade-in-up { animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-fade-in { animation: fadeIn 0.4s ease-out both; }
+.animate-scale-in { animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-slide-down { animation: slideDown 0.3s ease-out both; }
+.animate-float { animation: float 3s ease-in-out infinite; }
+
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+
+/* Glass morphism */
+.glass {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: var(--gradient-warm);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Button hover lift */
+.hover-lift {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.hover-lift:active {
+  transform: translateY(0);
+}
+
+/* Dot pattern background */
+.bg-dots {
+  background-image: radial-gradient(circle, rgba(26, 29, 38, 0.03) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Warm gradient background */
+.bg-warm-gradient {
+  background: linear-gradient(180deg, #FFF8F3 0%, #FAFBFC 100%);
 }
