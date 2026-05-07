@@ -50,6 +50,8 @@ Produce a JSON report with:
 
 3. hebrewWords: array of {hebrew, english, context}
    - Hebrew words/phrases the user used during the conversation
+   - IMPORTANT: "hebrew" field MUST be in Hebrew letters (e.g. "תודה רבה" not "Todaraba", "כן" not "Ken", "בסדר" not "beseder")
+   - If Whisper transcribed Hebrew as Latin characters, convert back to Hebrew script
    - Provide English translation
    - Include the sentence context where it was used
 
