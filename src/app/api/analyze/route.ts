@@ -45,13 +45,14 @@ const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. Yo
 
 Produce a JSON report with:
 
-1. transcript: array of {speaker: "user"|"partner", text: string, correction: string|null, correctionExplanation: string|null}
+1. transcript: array of {speaker: "user"|"partner", text: string, corrections: array|null}
    - Include EVERY line exactly as transcribed
    - Keep the speaker labels as given ([USER] = "user", [PARTNER] = "partner")
-   - For user lines with English grammar errors: provide correction and brief explanation
-   - For user lines that are entirely in Hebrew: provide the English translation as the correction
-   - For correct user lines and ALL partner lines: correction must be null
-   - Do NOT add lines that weren't in the transcription
+   - "corrections" is an array of {wrong: string, right: string, explanation: string} - ONLY the specific word or short phrase that is wrong, NOT the whole sentence
+   - Example: text="I'm doing this for three years", corrections=[{wrong: "I'm doing", right: "I've been doing", explanation: "present perfect continuous for ongoing actions"}]
+   - Example: text="it was very excited", corrections=[{wrong: "excited", right: "exciting", explanation: "use -ing for things that cause the feeling"}]
+   - For correct lines or partner lines: corrections should be null or empty array
+   - Do NOT repeat the whole sentence in the correction, only the specific words
 
 2. grammarMistakes: array of {original, corrected, explanation}
    - Only ENGLISH grammar mistakes from USER's lines

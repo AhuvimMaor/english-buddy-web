@@ -57,11 +57,16 @@ export interface HebrewWord {
   context: string;
 }
 
+export interface InlineCorrection {
+  wrong: string;
+  right: string;
+  explanation: string;
+}
+
 export interface TranscriptLine {
   speaker: 'user' | 'partner';
   text: string;
-  correction: string | null;
-  correctionExplanation: string | null;
+  corrections: InlineCorrection[] | null;
 }
 
 export interface Report {

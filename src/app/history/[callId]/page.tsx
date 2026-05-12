@@ -37,6 +37,49 @@ function ScoreRing({ score }: { score: number | null }) {
   );
 }
 
+function HighlightedText({ text, corrections }: { text: string; corrections: any[] | null }) {
+  if (!corrections || corrections.length === 0) {
+    return <span>{text}</span>;
+  }
+
+  let result: React.ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+
+  for (const corr of corrections) {
+    const wrong = corr.wrong || corr.original || '';
+    const right = corr.right || corr.corrected || '';
+    const explanation = corr.explanation || '';
+
+    const idx = remaining.toLowerCase().indexOf(wrong.toLowerCase());
+    if (idx === -1) {
+      continue;
+    }
+
+    if (idx > 0) {
+      result.push(<span key={key++}>{remaining.slice(0, idx)}</span>);
+    }
+
+    result.push(
+      <span key={key++} className="inline-block">
+        <span className="text-[var(--accent-coral)] line-through decoration-1">{remaining.slice(idx, idx + wrong.length)}</span>
+        <span className="text-[var(--accent-green)] font-semibold ml-1">{right}</span>
+        {explanation && (
+          <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 ml-0.5">{explanation}</span>
+        )}
+      </span>
+    );
+
+    remaining = remaining.slice(idx + wrong.length);
+  }
+
+  if (remaining) {
+    result.push(<span key={key++}>{remaining}</span>);
+  }
+
+  return <>{result}</>;
+}
+
 function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
   if (!transcript || transcript.length === 0) return null;
 
@@ -46,33 +89,24 @@ function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
         <span className="w-7 h-7 rounded-lg bg-[var(--accent-blue-light)] flex items-center justify-center text-sm">📝</span>
         Conversation
       </h2>
-      <div className="bg-white rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] p-4 space-y-3">
-        {transcript.map((line, i) => (
-          <div key={i} className={line.speaker === 'partner' ? 'opacity-60' : ''}>
-            <div className="flex items-start gap-2">
-              <span className={`text-[10px] font-bold mt-1 flex-shrink-0 uppercase tracking-wider ${
-                line.speaker === 'user' ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'
-              }`}>
-                {line.speaker === 'user' ? 'You' : 'Them'}
-              </span>
-              <div className="flex-1">
-                <p className={`text-sm leading-relaxed ${
-                  line.correction ? 'text-[var(--accent-coral)] line-through decoration-1' : 'text-[var(--text-primary)]'
+      <div className="bg-white rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] p-4 space-y-4">
+        {transcript.map((line, i) => {
+          const hasCorrections = line.corrections && line.corrections.length > 0;
+          return (
+            <div key={i} className={line.speaker === 'partner' ? 'opacity-50' : ''}>
+              <div className="flex items-start gap-2">
+                <span className={`text-[10px] font-bold mt-1 flex-shrink-0 uppercase tracking-wider ${
+                  line.speaker === 'user' ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'
                 }`}>
-                  {line.text}
+                  {line.speaker === 'user' ? 'You' : 'Them'}
+                </span>
+                <p className="flex-1 text-sm leading-relaxed text-[var(--text-primary)]">
+                  <HighlightedText text={line.text} corrections={line.corrections} />
                 </p>
-                {line.correction && (
-                  <div className="mt-1.5 bg-[var(--accent-green-light)] rounded-lg px-3 py-2">
-                    <p className="text-sm text-[var(--accent-green)] font-medium">✓ {line.correction}</p>
-                    {line.correctionExplanation && (
-                      <p className="text-[11px] text-[var(--text-muted)] mt-1">{line.correctionExplanation}</p>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
