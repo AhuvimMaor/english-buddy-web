@@ -1,0 +1,46 @@
+name: Build iOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create web output dir
+        run: mkdir -p out && touch out/index.html
+
+      - name: Sync Capacitor
+        run: npx cap sync ios
+
+      - name: Install CocoaPods
+        working-directory: ios/App
+        run: pod install
+
+      - name: Build iOS (unsigned)
+        working-directory: ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Upload iOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: english-buddy-ios
+          path: ios/App/build/Build/Products/Debug-iphonesimulator/App.app
