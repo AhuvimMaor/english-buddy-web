@@ -29,11 +29,14 @@ function getAdminDb() {
 const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation between two people practicing English. The transcription may contain both English and Hebrew text.
 
 IMPORTANT RULES:
-- The transcription captures BOTH speakers in one audio stream
-- Try to identify speaker changes by context, sentence style, or language switches
-- Label one speaker as "user" (the learner) and the other as "partner" (the helper)
+- The transcription captures BOTH speakers in one audio stream recorded from the USER's device
+- The USER is the one who initiated the recording - they are the language LEARNER
+- The PARTNER is helping them practice - they typically speak better English
+- To identify who is who: the user often speaks more hesitantly, uses Hebrew words, makes grammar errors. The partner speaks more fluently and sometimes corrects the user.
+- If the first few lines sound like someone explaining/welcoming, that's likely the PARTNER
 - Hebrew text should be identified as words the user couldn't say in English
 - Focus corrections ONLY on the user's English grammar, not on their Hebrew
+- Do NOT include any metadata, instructions, or system text in the transcript - only actual spoken words
 
 Produce a JSON report with:
 
@@ -95,10 +98,8 @@ export async function POST(req: NextRequest) {
         const result = await getOpenAI().audio.transcriptions.create({
           file: audioFile,
           model: 'whisper-1',
-          prompt: 'This is a conversation between two people practicing English. One speaker is a native Hebrew speaker who sometimes uses Hebrew words like toda, ken, beseder, yalla, nachon. The conversation is primarily in English with occasional Hebrew.',
-          response_format: 'verbose_json',
         });
-        transcription = (result as any).text;
+        transcription = result.text;
       } catch (e: any) {
         console.error('Transcription failed:', e.message);
         await callRef.update({ analysisStatus: 'failed' });
