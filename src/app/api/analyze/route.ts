@@ -48,9 +48,15 @@ Produce a JSON report with:
 1. transcript: array of {speaker: "user"|"partner", text: string, corrections: array|null}
    - Include EVERY line exactly as transcribed
    - Keep the speaker labels as given ([USER] = "user", [PARTNER] = "partner")
+   - IMPORTANT: When user mixes Hebrew words within an English sentence, keep them INLINE in the text field using Hebrew letters
+   - Example: text="I don't know how to לדבר English good"
+   - Example: text="Yesterday I had a מצגת at work"
+   - If Whisper transcribed Hebrew as Latin (e.g. "ledaber"), convert to Hebrew letters in the text
    - "corrections" is an array of {wrong: string, right: string, explanation: string} - ONLY the specific word or short phrase that is wrong, NOT the whole sentence
+   - For Hebrew words inline, the correction should provide the English word: {wrong: "לדבר", right: "speak", explanation: "Hebrew word - English equivalent is 'speak'"}
    - Example: text="I'm doing this for three years", corrections=[{wrong: "I'm doing", right: "I've been doing", explanation: "present perfect continuous for ongoing actions"}]
    - Example: text="it was very excited", corrections=[{wrong: "excited", right: "exciting", explanation: "use -ing for things that cause the feeling"}]
+   - Example: text="I need to do a מצגת tomorrow", corrections=[{wrong: "מצגת", right: "presentation", explanation: "Hebrew word"}]
    - For correct lines or partner lines: corrections should be null or empty array
    - Do NOT repeat the whole sentence in the correction, only the specific words
 
