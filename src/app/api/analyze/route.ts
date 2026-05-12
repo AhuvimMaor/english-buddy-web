@@ -26,45 +26,50 @@ function getAdminDb() {
   return getFirestore();
 }
 
-const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation between two people practicing English. The transcription may contain both English and Hebrew text.
+async function transcribeFile(bucket: any, path: string): Promise<string> {
+  const file = bucket.file(path);
+  const [buffer] = await file.download();
+  const ext = path.split('.').pop() || 'webm';
+  const { toFile } = require('openai/uploads');
+  const audioFile = await toFile(Buffer.from(buffer), `audio.${ext}`);
+  const result = await getOpenAI().audio.transcriptions.create({
+    file: audioFile,
+    model: 'whisper-1',
+  });
+  return result.text;
+}
 
-IMPORTANT RULES:
-- The transcription captures BOTH speakers in one audio stream recorded from the USER's device
-- The USER is the one who initiated the recording - they are the language LEARNER
-- The PARTNER is helping them practice - they typically speak better English
-- To identify who is who: the user often speaks more hesitantly, uses Hebrew words, makes grammar errors. The partner speaks more fluently and sometimes corrects the user.
-- If the first few lines sound like someone explaining/welcoming, that's likely the PARTNER
-- Hebrew text should be identified as words the user couldn't say in English
-- Focus corrections ONLY on the user's English grammar, not on their Hebrew
-- Do NOT include any metadata, instructions, or system text in the transcript - only actual spoken words
+const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with CLEAR speaker labels:
+- [USER]: is the Hebrew speaker who is LEARNING English
+- [PARTNER]: is the conversation partner helping them practice
 
 Produce a JSON report with:
 
 1. transcript: array of {speaker: "user"|"partner", text: string, correction: string|null, correctionExplanation: string|null}
-   - Include EVERY sentence from the entire conversation
-   - Break into individual sentences/phrases by each speaker
-   - For user lines with grammar/vocabulary errors: provide corrected English and explanation
-   - For correct user lines and all partner lines: correction should be null
-   - If user spoke Hebrew, show the Hebrew text and provide English correction/translation
+   - Include EVERY line exactly as transcribed
+   - Keep the speaker labels as given ([USER] = "user", [PARTNER] = "partner")
+   - For user lines with English grammar errors: provide correction and brief explanation
+   - For user lines that are entirely in Hebrew: provide the English translation as the correction
+   - For correct user lines and ALL partner lines: correction must be null
+   - Do NOT add lines that weren't in the transcription
 
 2. grammarMistakes: array of {original, corrected, explanation}
-   - Only English grammar errors (not Hebrew words)
-   - Explain the rule briefly
+   - Only ENGLISH grammar mistakes from USER's lines
+   - Not Hebrew words/sentences
 
 3. hebrewWords: array of {hebrew, english, context}
-   - Hebrew words/phrases the user used during the conversation
-   - IMPORTANT: "hebrew" field MUST be in Hebrew letters (e.g. "תודה רבה" not "Todaraba", "כן" not "Ken", "בסדר" not "beseder")
-   - If Whisper transcribed Hebrew as Latin characters, convert back to Hebrew script
+   - Hebrew words/phrases the user said
+   - "hebrew" field MUST be in Hebrew letters (תודה not "toda", כן not "ken")
+   - If transcribed in Latin letters, convert to Hebrew script
    - Provide English translation
-   - Include the sentence context where it was used
 
-4. fluencyScore: number 1-10 (1=mostly Hebrew/struggling, 5=mixed with errors, 8=mostly fluent, 10=native-like)
+4. fluencyScore: number 1-10
 
-5. summary: 2-3 sentences of encouraging feedback
+5. summary: 2-3 sentences encouraging feedback
 
-6. tips: array of 3 specific, actionable suggestions
+6. tips: array of 3 actionable suggestions
 
-Output valid JSON only. No markdown, no code fences.`;
+Output valid JSON only.`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -83,35 +88,39 @@ export async function POST(req: NextRequest) {
 
     const callData = callDoc.data()!;
 
+    if (!callData.recordingPath) {
+      await callRef.update({ analysisStatus: 'failed' });
+      return NextResponse.json({ error: 'No recording found' }, { status: 400 });
+    }
+
     await callRef.update({ analysisStatus: 'transcribing' });
+
+    const bucket = require('firebase-admin/storage').getStorage().bucket(
+      `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`
+    );
 
     let transcription: string;
 
-    if (callData.recordingPath) {
-      try {
-        const bucket = require('firebase-admin/storage').getStorage().bucket(`${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`);
-        const storageFile = bucket.file(callData.recordingPath);
-        const [buffer] = await storageFile.download();
-        const ext = callData.recordingPath.split('.').pop() || 'webm';
-        const { toFile } = require('openai/uploads');
-        const audioFile = await toFile(Buffer.from(buffer), `audio.${ext}`);
-        const result = await getOpenAI().audio.transcriptions.create({
-          file: audioFile,
-          model: 'whisper-1',
-        });
-        transcription = result.text;
-      } catch (e: any) {
-        console.error('Transcription failed:', e.message);
-        await callRef.update({ analysisStatus: 'failed' });
-        return NextResponse.json({ error: 'Transcription failed: ' + e.message }, { status: 500 });
+    try {
+      const userTranscript = await transcribeFile(bucket, callData.recordingPath);
+
+      let partnerTranscript = '';
+      if (callData.partnerRecordingPath) {
+        partnerTranscript = await transcribeFile(bucket, callData.partnerRecordingPath);
       }
-    } else {
+
+      if (partnerTranscript) {
+        transcription = `[USER]: ${userTranscript}\n\n[PARTNER]: ${partnerTranscript}`;
+      } else {
+        transcription = `[USER]: ${userTranscript}`;
+      }
+    } catch (e: any) {
+      console.error('Transcription failed:', e.message);
       await callRef.update({ analysisStatus: 'failed' });
-      return NextResponse.json({ error: 'No recording found for this call' }, { status: 400 });
+      return NextResponse.json({ error: 'Transcription failed: ' + e.message }, { status: 500 });
     }
 
     await callRef.update({ transcription });
-
     await callRef.update({ analysisStatus: 'analyzing' });
 
     const callerDoc = await db.collection('users').doc(callData.callerId).get();
@@ -124,7 +133,7 @@ export async function POST(req: NextRequest) {
         { role: 'system', content: SYSTEM_PROMPT },
         {
           role: 'user',
-          content: `Analyze this conversation transcription for user "${callerName}". Focus on their English usage:\n\n${transcription}`,
+          content: `Analyze this conversation. The user's name is "${callerName}":\n\n${transcription}`,
         },
       ],
     });
@@ -150,11 +159,9 @@ export async function POST(req: NextRequest) {
     }
 
     await callRef.update({ analysisStatus: 'complete' });
-
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Analysis error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-

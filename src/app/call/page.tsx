@@ -90,10 +90,19 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const blob = rtc.stopRecording();
-        if (blob && callId && firebaseUser && wasConnected) {
-          const storageRef = ref(storage, `recordings/${callId}/${firebaseUser.uid}.webm`);
-          await uploadBytes(storageRef, blob);
+        const { local, remote } = rtc.stopRecording();
+        if (callId && firebaseUser && wasConnected) {
+          const ext = local?.type?.includes('mp4') ? 'mp4' : 'webm';
+          if (local && local.size > 0) {
+            await uploadBytes(ref(storage, `recordings/${callId}/user.${ext}`), local);
+          }
+          if (remote && remote.size > 0) {
+            await uploadBytes(ref(storage, `recordings/${callId}/partner.${ext}`), remote);
+          }
+          await updateDoc(doc(db, 'calls', callId), {
+            recordingPath: `recordings/${callId}/user.${ext}`,
+            ...(remote && remote.size > 0 ? { partnerRecordingPath: `recordings/${callId}/partner.${ext}` } : {}),
+          });
         }
         await rtc.cleanup();
         webrtcRef.current = null;
@@ -209,17 +218,30 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const blob = rtc.stopRecording();
-        console.log('[Call] Recording blob:', blob ? `${blob.size} bytes, type=${blob.type}` : 'null');
-        if (blob && blob.size > 0 && callId && firebaseUser) {
+        const { local, remote } = rtc.stopRecording();
+        console.log('[Call] Local blob:', local?.size || 0, 'Remote blob:', remote?.size || 0);
+
+        if (callId && firebaseUser) {
           try {
-            const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
-            const path = `recordings/${callId}/${firebaseUser.uid}.${ext}`;
-            const storageRef = ref(storage, path);
-            console.log('[Call] Uploading recording to:', path);
-            await uploadBytes(storageRef, blob);
-            await updateDoc(doc(db, 'calls', callId), { recordingPath: path });
-            console.log('[Call] Recording uploaded successfully');
+            const ext = local?.type?.includes('mp4') ? 'mp4' : 'webm';
+
+            if (local && local.size > 0) {
+              const localPath = `recordings/${callId}/user.${ext}`;
+              await uploadBytes(ref(storage, localPath), local);
+              console.log('[Call] User recording uploaded');
+            }
+            if (remote && remote.size > 0) {
+              const remotePath = `recordings/${callId}/partner.${ext}`;
+              await uploadBytes(ref(storage, remotePath), remote);
+              console.log('[Call] Partner recording uploaded');
+            }
+
+            const recordingPath = `recordings/${callId}/user.${ext}`;
+            const partnerRecordingPath = remote && remote.size > 0 ? `recordings/${callId}/partner.${ext}` : null;
+            await updateDoc(doc(db, 'calls', callId), {
+              recordingPath,
+              ...(partnerRecordingPath ? { partnerRecordingPath } : {}),
+            });
           } catch (uploadErr: any) {
             console.error('[Call] Recording upload failed:', uploadErr.message);
           }

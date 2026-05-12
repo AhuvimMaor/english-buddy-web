@@ -32,7 +32,11 @@ export class WebRTCCall {
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
+  private localRecorder: MediaRecorder | null = null;
+  private remoteRecorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
+  private localChunks: Blob[] = [];
+  private remoteChunks: Blob[] = [];
   private callId: string;
   private userId: string;
   private unsubSignaling: (() => void) | null = null;
@@ -163,37 +167,7 @@ export class WebRTCCall {
     });
   }
 
-  startRecording() {
-    if (!this.localStream) {
-      console.warn('[WebRTC] No local stream, cannot record');
-      return;
-    }
-    this.chunks = [];
-
-    // Mix local + remote audio into one stream
-    let streamToRecord: MediaStream;
-    try {
-      this.audioContext = new AudioContext();
-      const dest = this.audioContext.createMediaStreamDestination();
-
-      const localSource = this.audioContext.createMediaStreamSource(this.localStream);
-      localSource.connect(dest);
-
-      if (this.remoteStream) {
-        const remoteSource = this.audioContext.createMediaStreamSource(this.remoteStream);
-        remoteSource.connect(dest);
-        console.log('[WebRTC] Recording both local + remote audio');
-      } else {
-        console.log('[WebRTC] Recording local only (no remote stream yet)');
-      }
-
-      this.mixedStream = dest.stream;
-      streamToRecord = dest.stream;
-    } catch (e) {
-      console.warn('[WebRTC] AudioContext mixing failed, recording local only:', e);
-      streamToRecord = this.localStream;
-    }
-
+  private createRecorder(stream: MediaStream, chunks: Blob[]): MediaRecorder | null {
     const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', ''];
     let selectedMime = '';
     for (const mime of mimeTypes) {
@@ -203,33 +177,70 @@ export class WebRTCCall {
       }
     }
     try {
-      this.recorder = selectedMime
-        ? new MediaRecorder(streamToRecord, { mimeType: selectedMime })
-        : new MediaRecorder(streamToRecord);
-      console.log('[WebRTC] Recording started, mimeType:', this.recorder.mimeType);
+      const recorder = selectedMime
+        ? new MediaRecorder(stream, { mimeType: selectedMime })
+        : new MediaRecorder(stream);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      return recorder;
     } catch (e) {
       console.error('[WebRTC] MediaRecorder creation failed:', e);
-      return;
-    }
-    this.recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) this.chunks.push(e.data);
-    };
-    this.recorder.start(1000);
-  }
-
-  stopRecording(): Blob | null {
-    if (!this.recorder || this.recorder.state === 'inactive') {
-      console.log('[WebRTC] No active recorder to stop, chunks:', this.chunks.length);
-      if (this.chunks.length > 0) {
-        return new Blob(this.chunks, { type: 'audio/webm' });
-      }
       return null;
     }
-    const mimeType = this.recorder.mimeType || 'audio/webm';
-    this.recorder.stop();
-    console.log('[WebRTC] Recording stopped, chunks:', this.chunks.length, 'mime:', mimeType);
-    if (this.chunks.length === 0) return null;
-    return new Blob(this.chunks, { type: mimeType });
+  }
+
+  startRecording() {
+    if (!this.localStream) {
+      console.warn('[WebRTC] No local stream, cannot record');
+      return;
+    }
+
+    this.localChunks = [];
+    this.remoteChunks = [];
+
+    // Record local (user's mic) separately
+    this.localRecorder = this.createRecorder(this.localStream, this.localChunks);
+    if (this.localRecorder) {
+      this.localRecorder.start(1000);
+      console.log('[WebRTC] Local recording started');
+    }
+
+    // Record remote (partner's audio) separately
+    if (this.remoteStream) {
+      this.remoteRecorder = this.createRecorder(this.remoteStream, this.remoteChunks);
+      if (this.remoteRecorder) {
+        this.remoteRecorder.start(1000);
+        console.log('[WebRTC] Remote recording started');
+      }
+    } else {
+      console.log('[WebRTC] No remote stream yet, will record local only');
+    }
+  }
+
+  stopRecording(): { local: Blob | null; remote: Blob | null } {
+    let localBlob: Blob | null = null;
+    let remoteBlob: Blob | null = null;
+
+    if (this.localRecorder && this.localRecorder.state !== 'inactive') {
+      this.localRecorder.stop();
+    }
+    if (this.remoteRecorder && this.remoteRecorder.state !== 'inactive') {
+      this.remoteRecorder.stop();
+    }
+
+    if (this.localChunks.length > 0) {
+      const mime = this.localRecorder?.mimeType || 'audio/webm';
+      localBlob = new Blob(this.localChunks, { type: mime });
+      console.log('[WebRTC] Local recording:', localBlob.size, 'bytes');
+    }
+    if (this.remoteChunks.length > 0) {
+      const mime = this.remoteRecorder?.mimeType || 'audio/webm';
+      remoteBlob = new Blob(this.remoteChunks, { type: mime });
+      console.log('[WebRTC] Remote recording:', remoteBlob.size, 'bytes');
+    }
+
+    return { local: localBlob, remote: remoteBlob };
   }
 
   toggleMute(): boolean {
