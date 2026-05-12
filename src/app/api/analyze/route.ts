@@ -34,7 +34,7 @@ async function transcribeFile(bucket: any, path: string): Promise<string> {
   const audioFile = await toFile(Buffer.from(buffer), `audio.${ext}`);
   const result = await getOpenAI().audio.transcriptions.create({
     file: audioFile,
-    model: 'whisper-1',
+    model: 'gpt-4o-transcribe',
   });
   return result.text;
 }
