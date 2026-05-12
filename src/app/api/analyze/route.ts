@@ -141,15 +141,28 @@ export async function POST(req: NextRequest) {
 
     const analysis = JSON.parse(completion.choices[0].message.content || '{}');
 
+    const transcript = analysis.transcript || [];
+
+    // Caller sees transcript as-is (USER=them, PARTNER=their partner)
+    // Callee sees transcript FLIPPED (USER=their partner, PARTNER=them)
     const userIds = [callData.callerId, callData.calleeId];
     for (const userId of userIds) {
       const partnerId = userId === callData.callerId ? callData.calleeId : callData.callerId;
+      const isCaller = userId === callData.callerId;
+
+      const userTranscript = isCaller
+        ? transcript
+        : transcript.map((line: any) => ({
+            ...line,
+            speaker: line.speaker === 'user' ? 'partner' : 'user',
+          }));
+
       await db.collection('reports').add({
         callId,
         userId,
         partnerId,
         callDuration: callData.durationSeconds || 0,
-        transcript: analysis.transcript || [],
+        transcript: userTranscript,
         grammarMistakes: analysis.grammarMistakes || [],
         hebrewWords: analysis.hebrewWords || [],
         fluencyScore: analysis.fluencyScore || null,
