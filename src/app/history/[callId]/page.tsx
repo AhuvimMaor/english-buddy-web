@@ -37,49 +37,6 @@ function ScoreRing({ score }: { score: number | null }) {
   );
 }
 
-function HighlightedText({ text, corrections }: { text: string; corrections: any[] | null }) {
-  if (!corrections || corrections.length === 0) {
-    return <span>{text}</span>;
-  }
-
-  let result: React.ReactNode[] = [];
-  let remaining = text;
-  let key = 0;
-
-  for (const corr of corrections) {
-    const wrong = corr.wrong || corr.original || '';
-    const right = corr.right || corr.corrected || '';
-    const explanation = corr.explanation || '';
-
-    const idx = remaining.toLowerCase().indexOf(wrong.toLowerCase());
-    if (idx === -1) {
-      continue;
-    }
-
-    if (idx > 0) {
-      result.push(<span key={key++}>{remaining.slice(0, idx)}</span>);
-    }
-
-    result.push(
-      <span key={key++} className="inline-block">
-        <span className="text-[var(--accent-coral)] line-through decoration-1">{remaining.slice(idx, idx + wrong.length)}</span>
-        <span className="text-[var(--accent-green)] font-semibold ml-1">{right}</span>
-        {explanation && (
-          <span className="block text-[10px] text-[var(--text-muted)] mt-0.5 ml-0.5">{explanation}</span>
-        )}
-      </span>
-    );
-
-    remaining = remaining.slice(idx + wrong.length);
-  }
-
-  if (remaining) {
-    result.push(<span key={key++}>{remaining}</span>);
-  }
-
-  return <>{result}</>;
-}
-
 function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
   if (!transcript || transcript.length === 0) return null;
 
@@ -89,21 +46,52 @@ function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
         <span className="w-7 h-7 rounded-lg bg-[var(--accent-blue-light)] flex items-center justify-center text-sm">📝</span>
         Conversation
       </h2>
-      <div className="bg-white rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] p-4 space-y-4">
+      <div className="bg-white rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] p-5 space-y-4">
         {transcript.map((line, i) => {
-          const hasCorrections = line.corrections && line.corrections.length > 0;
+          const corrections = line.corrections || [];
+          const label = line.speaker === 'user' ? 'you' : 'buddy';
+          const labelColor = line.speaker === 'user' ? 'text-[var(--accent-blue)]' : 'text-[var(--accent-purple)]';
+
           return (
-            <div key={i} className={line.speaker === 'partner' ? 'opacity-50' : ''}>
-              <div className="flex items-start gap-2">
-                <span className={`text-[10px] font-bold mt-1 flex-shrink-0 uppercase tracking-wider ${
-                  line.speaker === 'user' ? 'text-[var(--accent-blue)]' : 'text-[var(--text-muted)]'
-                }`}>
-                  {line.speaker === 'user' ? 'You' : 'Them'}
-                </span>
-                <p className="flex-1 text-sm leading-relaxed text-[var(--text-primary)]">
-                  <HighlightedText text={line.text} corrections={line.corrections} />
-                </p>
-              </div>
+            <div key={i}>
+              {/* The conversation line */}
+              <p className="text-[15px] leading-relaxed text-[var(--text-primary)]">
+                <span className={`font-bold ${labelColor}`}>{label}:</span>{' '}
+                <span className="text-[var(--text-secondary)]">&ldquo;{line.text}&rdquo;</span>
+              </p>
+
+              {/* Corrections below the line */}
+              {corrections.length > 0 && (
+                <div className="mt-1.5 ml-4 space-y-1">
+                  {corrections.map((corr: any, j: number) => {
+                    const wrong = corr.wrong || corr.original || '';
+                    const right = corr.right || corr.corrected || '';
+                    const explanation = corr.explanation || '';
+                    const isHebrew = /[֐-׿]/.test(wrong);
+
+                    return (
+                      <div key={j} className="text-sm">
+                        {isHebrew ? (
+                          <p className="text-[var(--accent-purple)]">
+                            <span className="font-medium">{wrong}</span>
+                            <span className="text-[var(--text-muted)] mx-1">=</span>
+                            <span className="font-medium">{right}</span>
+                          </p>
+                        ) : (
+                          <p>
+                            <span className="text-[var(--accent-coral)] line-through">{wrong}</span>
+                            <span className="text-[var(--text-muted)] mx-1">→</span>
+                            <span className="text-[var(--accent-green)] font-medium">{right}</span>
+                            {explanation && (
+                              <span className="text-[var(--text-muted)] text-xs ml-2">({explanation})</span>
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
