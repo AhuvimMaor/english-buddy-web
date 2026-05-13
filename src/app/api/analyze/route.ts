@@ -132,7 +132,14 @@ export async function POST(req: NextRequest) {
 
     const callData = callDoc.data()!;
 
-    if (!callData.recordingPath) {
+    const callerId = callData.callerId;
+    const calleeId = callData.calleeId;
+
+    // Find recordings - new format: recording_{userId}, old format: recordingPath/partnerRecordingPath
+    const callerRecording = callData[`recording_${callerId}`] || callData.recordingPath || null;
+    const calleeRecording = callData[`recording_${calleeId}`] || callData.partnerRecordingPath || null;
+
+    if (!callerRecording && !calleeRecording) {
       await callRef.update({ analysisStatus: 'failed' });
       return NextResponse.json({ error: 'No recording found' }, { status: 400 });
     }
@@ -146,17 +153,22 @@ export async function POST(req: NextRequest) {
     let transcription: string;
 
     try {
-      const userSegments = await transcribeFileWithTimestamps(bucket, callData.recordingPath, 'user');
+      let callerSegments: TimedSegment[] = [];
+      let calleeSegments: TimedSegment[] = [];
 
-      let partnerSegments: TimedSegment[] = [];
-      if (callData.partnerRecordingPath) {
-        partnerSegments = await transcribeFileWithTimestamps(bucket, callData.partnerRecordingPath, 'partner');
+      if (callerRecording) {
+        callerSegments = await transcribeFileWithTimestamps(bucket, callerRecording, 'user');
+      }
+      if (calleeRecording) {
+        calleeSegments = await transcribeFileWithTimestamps(bucket, calleeRecording, 'partner');
       }
 
-      if (partnerSegments.length > 0) {
-        transcription = interleaveByTime(userSegments, partnerSegments);
+      if (callerSegments.length > 0 && calleeSegments.length > 0) {
+        transcription = interleaveByTime(callerSegments, calleeSegments);
+      } else if (callerSegments.length > 0) {
+        transcription = `[USER]: ${callerSegments.map(s => s.text).join(' ')}`;
       } else {
-        transcription = `[USER]: ${userSegments.map(s => s.text).join(' ')}`;
+        transcription = `[PARTNER]: ${calleeSegments.map(s => s.text).join(' ')}`;
       }
     } catch (e: any) {
       console.error('Transcription failed:', e.message);

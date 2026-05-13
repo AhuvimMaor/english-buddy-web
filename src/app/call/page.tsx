@@ -124,19 +124,19 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const { local, remote } = rtc.stopRecording();
-        if (callId && firebaseUser && wasConnected) {
-          const ext = local?.type?.includes('mp4') ? 'mp4' : 'webm';
-          if (local && local.size > 0) {
-            await uploadBytes(ref(storage, `recordings/${callId}/user.${ext}`), local);
+        const { local } = rtc.stopRecording();
+        if (callId && firebaseUser && wasConnected && local && local.size > 0) {
+          const ext = local.type?.includes('mp4') ? 'mp4' : 'webm';
+          const myPath = `recordings/${callId}/${firebaseUser.uid}.${ext}`;
+          try {
+            await uploadBytes(ref(storage, myPath), local);
+            await updateDoc(doc(db, 'calls', callId), {
+              [`recording_${firebaseUser.uid}`]: myPath,
+            });
+            console.log('[Call] My recording uploaded:', myPath);
+          } catch (e: any) {
+            console.error('[Call] Upload failed:', e.message);
           }
-          if (remote && remote.size > 0) {
-            await uploadBytes(ref(storage, `recordings/${callId}/partner.${ext}`), remote);
-          }
-          await updateDoc(doc(db, 'calls', callId), {
-            recordingPath: `recordings/${callId}/user.${ext}`,
-            ...(remote && remote.size > 0 ? { partnerRecordingPath: `recordings/${callId}/partner.${ext}` } : {}),
-          });
         }
         await rtc.cleanup();
         webrtcRef.current = null;
@@ -252,29 +252,19 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const { local, remote } = rtc.stopRecording();
-        console.log('[Call] Local blob:', local?.size || 0, 'Remote blob:', remote?.size || 0);
+        const { local } = rtc.stopRecording();
+        console.log('[Call] Local blob:', local?.size || 0);
 
-        if (callId && firebaseUser) {
+        if (callId && firebaseUser && local && local.size > 0) {
           try {
-            const ext = local?.type?.includes('mp4') ? 'mp4' : 'webm';
+            const ext = local.type?.includes('mp4') ? 'mp4' : 'webm';
+            const myPath = `recordings/${callId}/${firebaseUser.uid}.${ext}`;
+            await uploadBytes(ref(storage, myPath), local);
+            console.log('[Call] My recording uploaded:', myPath);
 
-            if (local && local.size > 0) {
-              const localPath = `recordings/${callId}/user.${ext}`;
-              await uploadBytes(ref(storage, localPath), local);
-              console.log('[Call] User recording uploaded');
-            }
-            if (remote && remote.size > 0) {
-              const remotePath = `recordings/${callId}/partner.${ext}`;
-              await uploadBytes(ref(storage, remotePath), remote);
-              console.log('[Call] Partner recording uploaded');
-            }
-
-            const recordingPath = `recordings/${callId}/user.${ext}`;
-            const partnerRecordingPath = remote && remote.size > 0 ? `recordings/${callId}/partner.${ext}` : null;
+            // Store path under my UID key so both users' recordings coexist
             await updateDoc(doc(db, 'calls', callId), {
-              recordingPath,
-              ...(partnerRecordingPath ? { partnerRecordingPath } : {}),
+              [`recording_${firebaseUser.uid}`]: myPath,
             });
           } catch (uploadErr: any) {
             console.error('[Call] Recording upload failed:', uploadErr.message);
