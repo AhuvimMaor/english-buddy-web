@@ -26,6 +26,22 @@ function CallItem({ call, userId, index }: { call: Call; userId: string; index: 
 
   const hasReport = call.analysisStatus === 'complete';
 
+  const timeAgo = call.endedAt?.seconds
+    ? getTimeAgo(call.endedAt.seconds * 1000)
+    : '';
+
+  function getTimeAgo(ms: number): string {
+    const diff = Date.now() - ms;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return new Date(ms).toLocaleDateString();
+  }
+
   return (
     <button
       onClick={() => hasReport && router.push(`/history/${call.id}`)}
@@ -43,7 +59,7 @@ function CallItem({ call, userId, index }: { call: Call; userId: string; index: 
       <div className="flex-1">
         <p className="font-semibold text-[var(--text-primary)] text-[15px]">{partnerName || '...'}</p>
         <p className="text-xs text-[var(--text-muted)] mt-0.5">
-          {duration} · {hasReport ? '✅ Report ready' : '⏳ Processing...'}
+          {duration} · {hasReport ? '✅ Report ready' : '⏳ Processing...'}{timeAgo ? ` · ${timeAgo}` : ''}
         </p>
       </div>
       {hasReport && (

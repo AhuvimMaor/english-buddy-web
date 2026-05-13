@@ -227,6 +227,20 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Update call stats for both users
+    const durationMinutes = (callData.durationSeconds || 0) / 60;
+    const { FieldValue } = require('firebase-admin/firestore');
+    for (const uid of [callData.callerId, callData.calleeId]) {
+      try {
+        await db.collection('users').doc(uid).update({
+          callCount: FieldValue.increment(1),
+          totalCallMinutes: FieldValue.increment(durationMinutes),
+        });
+      } catch (e) {
+        console.error(`Failed to update stats for ${uid}:`, e);
+      }
+    }
+
     await callRef.update({ analysisStatus: 'complete' });
     return NextResponse.json({ success: true });
   } catch (error: any) {
