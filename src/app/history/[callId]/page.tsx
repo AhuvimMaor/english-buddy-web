@@ -43,55 +43,68 @@ function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
   return (
     <div className="mb-6 animate-fade-in-up stagger-3">
       <h2 className="text-base font-bold text-[var(--text-primary)] mb-3 flex items-center gap-2">
-        <span className="w-7 h-7 rounded-lg bg-[var(--accent-blue-light)] flex items-center justify-center text-sm">📝</span>
+        <span className="w-7 h-7 rounded-lg bg-[var(--accent-blue-light)] flex items-center justify-center text-sm">💬</span>
         Conversation
       </h2>
-      <div className="bg-white rounded-[var(--radius-md)] shadow-[var(--shadow-sm)] p-5 space-y-4">
+      <div className="space-y-3">
         {transcript.map((line, i) => {
           const corrections = line.corrections || [];
-          const label = line.speaker === 'user' ? 'you' : 'buddy';
-          const labelColor = line.speaker === 'user' ? 'text-[var(--accent-blue)]' : 'text-[var(--accent-purple)]';
+          const isUser = line.speaker === 'user';
 
           return (
-            <div key={i}>
-              {/* The conversation line */}
-              <p className="text-[15px] leading-relaxed text-[var(--text-primary)]">
-                <span className={`font-bold ${labelColor}`}>{label}:</span>{' '}
-                <span className="text-[var(--text-secondary)]">&ldquo;{line.text}&rdquo;</span>
-              </p>
+            <div key={i} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] ${isUser ? 'items-end' : 'items-start'}`}>
+                {/* Speaker label */}
+                <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${
+                  isUser ? 'text-right text-[var(--accent-blue)]' : 'text-left text-[var(--text-muted)]'
+                }`}>
+                  {isUser ? 'You' : 'Buddy'}
+                </p>
 
-              {/* Corrections below the line */}
-              {corrections.length > 0 && (
-                <div className="mt-1.5 ml-4 space-y-1">
-                  {corrections.map((corr: any, j: number) => {
-                    const wrong = corr.wrong || corr.original || '';
-                    const right = corr.right || corr.corrected || '';
-                    const explanation = corr.explanation || '';
-                    const isHebrew = /[֐-׿]/.test(wrong);
-
-                    return (
-                      <div key={j} className="text-sm">
-                        {isHebrew ? (
-                          <p className="text-[var(--accent-purple)]">
-                            <span className="font-medium">{wrong}</span>
-                            <span className="text-[var(--text-muted)] mx-1">=</span>
-                            <span className="font-medium">{right}</span>
-                          </p>
-                        ) : (
-                          <p>
-                            <span className="text-[var(--accent-coral)] line-through">{wrong}</span>
-                            <span className="text-[var(--text-muted)] mx-1">→</span>
-                            <span className="text-[var(--accent-green)] font-medium">{right}</span>
-                            {explanation && (
-                              <span className="text-[var(--text-muted)] text-xs ml-2">({explanation})</span>
-                            )}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
+                {/* Chat bubble */}
+                <div className={`rounded-2xl px-4 py-2.5 ${
+                  isUser
+                    ? 'bg-[var(--accent-blue)] text-white rounded-br-md'
+                    : 'bg-white border border-gray-100 shadow-[var(--shadow-sm)] text-[var(--text-primary)] rounded-bl-md'
+                }`}>
+                  <p className="text-[14px] leading-relaxed">{line.text}</p>
                 </div>
-              )}
+
+                {/* Corrections */}
+                {corrections.length > 0 && (
+                  <div className={`mt-2 space-y-1.5 ${isUser ? 'mr-1' : 'ml-1'}`}>
+                    {corrections.map((corr: any, j: number) => {
+                      const wrong = corr.wrong || corr.original || '';
+                      const right = corr.right || corr.corrected || '';
+                      const explanation = corr.explanation || '';
+                      const isHebrew = /[֐-׿]/.test(wrong);
+
+                      return (
+                        <div key={j} className="bg-[var(--accent-amber-light)] rounded-xl px-3 py-2">
+                          {isHebrew ? (
+                            <p className="text-xs">
+                              <span className="font-semibold text-[var(--text-primary)]">{wrong}</span>
+                              <span className="text-[var(--text-muted)] mx-1.5">=</span>
+                              <span className="font-semibold text-[var(--accent-blue)]">{right}</span>
+                            </p>
+                          ) : (
+                            <div>
+                              <p className="text-xs">
+                                <span className="text-[var(--accent-coral)] line-through decoration-1">{wrong}</span>
+                                <span className="mx-1.5">→</span>
+                                <span className="text-[var(--accent-green)] font-semibold">{right}</span>
+                              </p>
+                              {explanation && (
+                                <p className="text-[10px] text-[var(--text-muted)] mt-0.5">{explanation}</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
