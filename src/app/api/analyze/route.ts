@@ -26,7 +26,14 @@ function getAdminDb() {
   return getFirestore();
 }
 
-async function transcribeFile(bucket: any, path: string): Promise<string> {
+interface TimedSegment {
+  start: number;
+  end: number;
+  text: string;
+  speaker: 'user' | 'partner';
+}
+
+async function transcribeFileWithTimestamps(bucket: any, path: string, speaker: 'user' | 'partner'): Promise<TimedSegment[]> {
   const file = bucket.file(path);
   const [buffer] = await file.download();
   const ext = path.split('.').pop() || 'webm';
@@ -35,8 +42,38 @@ async function transcribeFile(bucket: any, path: string): Promise<string> {
   const result = await getOpenAI().audio.transcriptions.create({
     file: audioFile,
     model: 'gpt-4o-transcribe',
+    response_format: 'verbose_json',
+    timestamp_granularities: ['segment'],
   });
-  return result.text;
+
+  const segments: TimedSegment[] = ((result as any).segments || []).map((seg: any) => ({
+    start: seg.start,
+    end: seg.end,
+    text: seg.text?.trim() || '',
+    speaker,
+  }));
+
+  return segments.filter(s => s.text.length > 0);
+}
+
+function interleaveByTime(userSegments: TimedSegment[], partnerSegments: TimedSegment[]): string {
+  const all = [...userSegments, ...partnerSegments].sort((a, b) => a.start - b.start);
+
+  let result = '';
+  let lastSpeaker = '';
+
+  for (const seg of all) {
+    if (seg.speaker !== lastSpeaker) {
+      if (result) result += '\n';
+      result += `[${seg.speaker === 'user' ? 'USER' : 'PARTNER'}]: `;
+      lastSpeaker = seg.speaker;
+    } else {
+      result += ' ';
+    }
+    result += seg.text;
+  }
+
+  return result;
 }
 
 const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with CLEAR speaker labels:
@@ -109,17 +146,17 @@ export async function POST(req: NextRequest) {
     let transcription: string;
 
     try {
-      const userTranscript = await transcribeFile(bucket, callData.recordingPath);
+      const userSegments = await transcribeFileWithTimestamps(bucket, callData.recordingPath, 'user');
 
-      let partnerTranscript = '';
+      let partnerSegments: TimedSegment[] = [];
       if (callData.partnerRecordingPath) {
-        partnerTranscript = await transcribeFile(bucket, callData.partnerRecordingPath);
+        partnerSegments = await transcribeFileWithTimestamps(bucket, callData.partnerRecordingPath, 'partner');
       }
 
-      if (partnerTranscript) {
-        transcription = `[USER]: ${userTranscript}\n\n[PARTNER]: ${partnerTranscript}`;
+      if (partnerSegments.length > 0) {
+        transcription = interleaveByTime(userSegments, partnerSegments);
       } else {
-        transcription = `[USER]: ${userTranscript}`;
+        transcription = `[USER]: ${userSegments.map(s => s.text).join(' ')}`;
       }
     } catch (e: any) {
       console.error('Transcription failed:', e.message);
