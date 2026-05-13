@@ -20,6 +20,8 @@ function CallContent() {
   const [status, setStatus] = useState<'mic' | 'init' | 'ringing' | 'connected' | 'ended'>('mic');
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
+  const [speakerOn, setSpeakerOn] = useState(true);
+  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
   const [callId, setCallId] = useState(callIdParam || '');
   const [error, setError] = useState('');
   const endingRef = useRef(false);
@@ -34,6 +36,38 @@ function CallContent() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  // Caller hears "toot...toot...toot" dial tone
+  useEffect(() => {
+    if (status === 'ringing' && !isCallee) {
+      let ctx: AudioContext | null = null;
+      let intervalId: ReturnType<typeof setInterval>;
+
+      const playDialTone = () => {
+        try {
+          if (!ctx) ctx = new AudioContext();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = 425; // Standard dial tone frequency
+          gain.gain.value = 0.12;
+          osc.start();
+          osc.stop(ctx.currentTime + 1.0); // 1 second beep
+          gain.gain.setValueAtTime(0.12, ctx.currentTime + 1.0);
+          gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 1.0);
+        } catch {}
+      };
+
+      playDialTone();
+      intervalId = setInterval(playDialTone, 3000); // beep every 3s (1s on, 2s off)
+
+      return () => {
+        clearInterval(intervalId);
+        ctx?.close().catch(() => {});
+      };
+    }
+  }, [status, isCallee]);
 
   useEffect(() => {
     if (!partnerId) return;
@@ -359,8 +393,18 @@ function CallContent() {
           ✕
         </button>
 
-        <button className="w-16 h-16 rounded-full bg-white/10 hover:bg-white/15 flex items-center justify-center text-2xl transition">
-          🔊
+        <button
+          onClick={() => {
+            setSpeakerOn(!speakerOn);
+            if (remoteAudioRef.current) {
+              (remoteAudioRef.current as any).setSinkId?.(speakerOn ? 'earpiece' : 'default').catch(() => {});
+            }
+          }}
+          className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition active:scale-90 ${
+            speakerOn ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'
+          }`}
+        >
+          {speakerOn ? '🔊' : '🔈'}
         </button>
       </div>
     </div>

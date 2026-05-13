@@ -62,7 +62,29 @@ export function IncomingCallListener() {
   // Vibrate + ring when incoming call
   useEffect(() => {
     if (incomingCall) {
+      let audioCtx: AudioContext | null = null;
+
+      const playRingtone = () => {
+        try {
+          if (!audioCtx) audioCtx = new AudioContext();
+          // Phone ring pattern
+          [0, 0.15, 0.3].forEach(delay => {
+            const osc = audioCtx!.createOscillator();
+            const gain = audioCtx!.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx!.destination);
+            osc.frequency.value = 800;
+            gain.gain.value = 0.2;
+            osc.start(audioCtx!.currentTime + delay);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx!.currentTime + delay + 0.12);
+            osc.stop(audioCtx!.currentTime + delay + 0.12);
+          });
+        } catch {}
+      };
+
+      playRingtone();
       ringIntervalRef.current = setInterval(() => {
+        playRingtone();
         if (navigator.vibrate) {
           navigator.vibrate([200, 100, 200]);
         }
