@@ -70,8 +70,8 @@ function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
                   <p className="text-[14px] leading-relaxed">{line.text}</p>
                 </div>
 
-                {/* Corrections */}
-                {corrections.length > 0 && (
+                {/* Corrections - only show on YOUR messages */}
+                {isUser && corrections.length > 0 && (
                   <div className={`mt-2 space-y-1.5 ${isUser ? 'mr-1' : 'ml-1'}`}>
                     {corrections.map((corr: any, j: number) => {
                       const wrong = corr.wrong || corr.original || '';
