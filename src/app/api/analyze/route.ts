@@ -41,7 +41,7 @@ async function transcribeFileWithTimestamps(bucket: any, path: string, speaker: 
   const audioFile = await toFile(Buffer.from(buffer), `audio.${ext}`);
   const result = await getOpenAI().audio.transcriptions.create({
     file: audioFile,
-    model: 'gpt-4o-transcribe',
+    model: 'whisper-1',
     response_format: 'verbose_json',
     timestamp_granularities: ['segment'],
   });
