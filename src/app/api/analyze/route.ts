@@ -180,44 +180,44 @@ export async function POST(req: NextRequest) {
     await callRef.update({ analysisStatus: 'analyzing' });
 
     const callerDoc = await db.collection('users').doc(callData.callerId).get();
+    const calleeDoc = await db.collection('users').doc(callData.calleeId).get();
     const callerName = callerDoc.data()?.displayName || 'User';
+    const calleeName = calleeDoc.data()?.displayName || 'Partner';
 
-    const completion = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o',
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Analyze this conversation. The user's name is "${callerName}":\n\n${transcription}`,
-        },
-      ],
-    });
+    // Analyze each speaker separately - each gets their own personalized report
+    const participants = [
+      { userId: callData.callerId, partnerId: callData.calleeId, name: callerName, speakerLabel: 'USER', partnerLabel: 'PARTNER' },
+      { userId: callData.calleeId, partnerId: callData.callerId, name: calleeName, speakerLabel: 'PARTNER', partnerLabel: 'USER' },
+    ];
 
-    const analysis = JSON.parse(completion.choices[0].message.content || '{}');
+    for (const participant of participants) {
+      const completion = await getOpenAI().chat.completions.create({
+        model: 'gpt-4o',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Analyze this conversation for "${participant.name}". Their lines are labeled [${participant.speakerLabel}]. Analyze ONLY their English - find grammar mistakes, Hebrew words, and score THEIR fluency. The other speaker [${participant.partnerLabel}] is their conversation partner.\n\n${transcription}`,
+          },
+        ],
+      });
 
-    const transcript = analysis.transcript || [];
-
-    // Caller sees transcript as-is (USER=them, PARTNER=their partner)
-    // Callee sees transcript FLIPPED (USER=their partner, PARTNER=them)
-    const userIds = [callData.callerId, callData.calleeId];
-    for (const userId of userIds) {
-      const partnerId = userId === callData.callerId ? callData.calleeId : callData.callerId;
-      const isCaller = userId === callData.callerId;
-
-      const userTranscript = isCaller
-        ? transcript
-        : transcript.map((line: any) => ({
-            ...line,
-            speaker: line.speaker === 'user' ? 'partner' : 'user',
-          }));
+      const analysis = JSON.parse(completion.choices[0].message.content || '{}');
+      const transcript = (analysis.transcript || []).map((line: any) => {
+        // Flip labels so "user" always means the person viewing the report
+        if (participant.speakerLabel === 'PARTNER') {
+          return { ...line, speaker: line.speaker === 'user' ? 'partner' : 'user' };
+        }
+        return line;
+      });
 
       await db.collection('reports').add({
         callId,
-        userId,
-        partnerId,
+        userId: participant.userId,
+        partnerId: participant.partnerId,
         callDuration: callData.durationSeconds || 0,
-        transcript: userTranscript,
+        transcript,
         grammarMistakes: analysis.grammarMistakes || [],
         hebrewWords: analysis.hebrewWords || [],
         fluencyScore: analysis.fluencyScore || null,
