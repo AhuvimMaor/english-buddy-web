@@ -191,7 +191,7 @@ function CallContent() {
 
     rtc.onConnectionState = (state) => {
       if (!mountedRef.current) return;
-      if (state === 'connected') {
+      if (state === 'connected' && !timerRef.current) {
         setStatus('connected');
         rtc.startRecording();
         timerRef.current = setInterval(() => {

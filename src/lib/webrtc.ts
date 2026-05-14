@@ -77,14 +77,22 @@ export class WebRTCCall {
       }
     };
 
+    let notifiedConnected = false;
+
     this.pc.onconnectionstatechange = () => {
       console.log('[WebRTC] Connection state:', this.pc.connectionState);
-      this.onConnectionState?.(this.pc.connectionState);
+      if (this.pc.connectionState === 'connected' && !notifiedConnected) {
+        notifiedConnected = true;
+        this.onConnectionState?.('connected');
+      } else if (this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed') {
+        this.onConnectionState?.(this.pc.connectionState);
+      }
     };
 
     this.pc.oniceconnectionstatechange = () => {
       console.log('[WebRTC] ICE state:', this.pc.iceConnectionState);
-      if (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') {
+      if ((this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') && !notifiedConnected) {
+        notifiedConnected = true;
         this.onConnectionState?.('connected');
       }
     };
