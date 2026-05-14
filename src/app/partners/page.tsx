@@ -9,7 +9,12 @@ import { NavBar } from '@/components/NavBar';
 
 function getStatus(user: UserProfile) {
   if (user.inCall) return { label: 'In a call', dot: 'bg-amber-400', available: false };
-  if (user.isOnline) return { label: 'Available', dot: 'bg-[var(--accent-green)]', available: true };
+
+  // Check if truly active - lastSeen within 2 minutes
+  const lastSeen = (user as any).lastSeen?.seconds;
+  const isStale = lastSeen && (Date.now() / 1000 - lastSeen) > 120;
+
+  if (user.isOnline && !isStale) return { label: 'Available', dot: 'bg-[var(--accent-green)]', available: true };
   return { label: 'Offline', dot: 'bg-gray-300', available: false };
 }
 

@@ -45,8 +45,8 @@ export function useAuth() {
     const userRef = doc(db, 'users', firebaseUser.uid);
     let resetDone = false;
 
-    // Set online when app is active
-    updateDoc(userRef, { isOnline: true, inCall: false }).catch(() => {});
+    // Set online + lastSeen timestamp
+    updateDoc(userRef, { isOnline: true, inCall: false, lastSeen: serverTimestamp() }).catch(() => {});
 
     const unsub = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
@@ -61,12 +61,19 @@ export function useAuth() {
       setLoading(false);
     });
 
+    // Heartbeat - update lastSeen every 30s while active
+    const heartbeat = setInterval(() => {
+      if (!document.hidden) {
+        updateDoc(userRef, { lastSeen: serverTimestamp() }).catch(() => {});
+      }
+    }, 30000);
+
     // Set offline when user leaves or hides app
     const goOffline = () => {
       updateDoc(userRef, { isOnline: false }).catch(() => {});
     };
     const goOnline = () => {
-      updateDoc(userRef, { isOnline: true }).catch(() => {});
+      updateDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() }).catch(() => {});
     };
     const handleVisibility = () => {
       if (document.hidden) {
@@ -80,6 +87,7 @@ export function useAuth() {
     document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      clearInterval(heartbeat);
       window.removeEventListener('beforeunload', goOffline);
       document.removeEventListener('visibilitychange', handleVisibility);
       goOffline();
