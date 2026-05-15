@@ -33,10 +33,7 @@ export class WebRTCCall {
   private remoteStream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
   private localRecorder: MediaRecorder | null = null;
-  private remoteRecorder: MediaRecorder | null = null;
-  private chunks: Blob[] = [];
   private localChunks: Blob[] = [];
-  private remoteChunks: Blob[] = [];
   private callId: string;
   private userId: string;
   private unsubSignaling: (() => void) | null = null;
@@ -205,50 +202,47 @@ export class WebRTCCall {
     }
 
     this.localChunks = [];
-    this.remoteChunks = [];
 
-    // Record local (user's mic) separately
-    this.localRecorder = this.createRecorder(this.localStream, this.localChunks);
-    if (this.localRecorder) {
-      this.localRecorder.start(1000);
-      console.log('[WebRTC] Local recording started');
+    // Record MIXED audio (local mic + remote partner) using AudioContext
+    let streamToRecord: MediaStream;
+    try {
+      this.audioContext = new AudioContext();
+      const dest = this.audioContext.createMediaStreamDestination();
+      const localSource = this.audioContext.createMediaStreamSource(this.localStream);
+      localSource.connect(dest);
+
+      if (this.remoteStream) {
+        const remoteSource = this.audioContext.createMediaStreamSource(this.remoteStream);
+        remoteSource.connect(dest);
+        console.log('[WebRTC] Recording MIXED (local + remote)');
+      } else {
+        console.log('[WebRTC] Recording local only (no remote yet)');
+      }
+      streamToRecord = dest.stream;
+    } catch (e) {
+      console.warn('[WebRTC] AudioContext mix failed, recording local:', e);
+      streamToRecord = this.localStream;
     }
 
-    // Record remote (partner's audio) separately
-    if (this.remoteStream) {
-      this.remoteRecorder = this.createRecorder(this.remoteStream, this.remoteChunks);
-      if (this.remoteRecorder) {
-        this.remoteRecorder.start(1000);
-        console.log('[WebRTC] Remote recording started');
-      }
-    } else {
-      console.log('[WebRTC] No remote stream yet, will record local only');
+    this.localRecorder = this.createRecorder(streamToRecord, this.localChunks);
+    if (this.localRecorder) {
+      this.localRecorder.start(1000);
+      console.log('[WebRTC] Recording started');
     }
   }
 
-  stopRecording(): { local: Blob | null; remote: Blob | null } {
-    let localBlob: Blob | null = null;
-    let remoteBlob: Blob | null = null;
-
+  stopRecording(): Blob | null {
     if (this.localRecorder && this.localRecorder.state !== 'inactive') {
       this.localRecorder.stop();
-    }
-    if (this.remoteRecorder && this.remoteRecorder.state !== 'inactive') {
-      this.remoteRecorder.stop();
     }
 
     if (this.localChunks.length > 0) {
       const mime = this.localRecorder?.mimeType || 'audio/webm';
-      localBlob = new Blob(this.localChunks, { type: mime });
-      console.log('[WebRTC] Local recording:', localBlob.size, 'bytes');
+      const blob = new Blob(this.localChunks, { type: mime });
+      console.log('[WebRTC] Recording:', blob.size, 'bytes');
+      return blob;
     }
-    if (this.remoteChunks.length > 0) {
-      const mime = this.remoteRecorder?.mimeType || 'audio/webm';
-      remoteBlob = new Blob(this.remoteChunks, { type: mime });
-      console.log('[WebRTC] Remote recording:', remoteBlob.size, 'bytes');
-    }
-
-    return { local: localBlob, remote: remoteBlob };
+    return null;
   }
 
   toggleMute(): boolean {

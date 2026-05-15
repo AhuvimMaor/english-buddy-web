@@ -124,7 +124,7 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const { local } = rtc.stopRecording();
+        const local = rtc.stopRecording();
         if (callId && firebaseUser && wasConnected && local && local.size > 0) {
           const ext = local.type?.includes('mp4') ? 'mp4' : 'webm';
           const myPath = `recordings/${callId}/${firebaseUser.uid}.${ext}`;
@@ -252,7 +252,7 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const { local } = rtc.stopRecording();
+        const local = rtc.stopRecording();
         console.log('[Call] Local blob:', local?.size || 0);
 
         if (callId && firebaseUser && local && local.size > 0) {
