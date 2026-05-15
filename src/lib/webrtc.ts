@@ -32,6 +32,7 @@ export class WebRTCCall {
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
+  private recordingStream: MediaStream | null = null;
   private localRecorder: MediaRecorder | null = null;
   private localChunks: Blob[] = [];
   private callId: string;
@@ -96,8 +97,22 @@ export class WebRTCCall {
   }
 
   async start(): Promise<MediaStream> {
+    // Get mic for WebRTC call
     this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     this.localStream.getTracks().forEach(t => this.pc.addTrack(t, this.localStream!));
+
+    // Get SEPARATE mic stream for recording (independent from WebRTC processing)
+    try {
+      this.recordingStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+      console.log('[WebRTC] Dedicated recording stream created');
+    } catch {
+      // Fallback: clone the WebRTC stream
+      this.recordingStream = this.localStream.clone();
+      console.log('[WebRTC] Using cloned stream for recording');
+    }
+
     this.listenSignaling();
     return this.localStream;
   }
@@ -196,38 +211,19 @@ export class WebRTCCall {
   }
 
   startRecording() {
-    if (!this.localStream) {
-      console.warn('[WebRTC] No local stream, cannot record');
+    const stream = this.recordingStream || this.localStream;
+    if (!stream) {
+      console.warn('[WebRTC] No stream for recording');
       return;
     }
 
     this.localChunks = [];
 
-    // Record MIXED audio (local mic + remote partner) using AudioContext
-    let streamToRecord: MediaStream;
-    try {
-      this.audioContext = new AudioContext();
-      const dest = this.audioContext.createMediaStreamDestination();
-      const localSource = this.audioContext.createMediaStreamSource(this.localStream);
-      localSource.connect(dest);
-
-      if (this.remoteStream) {
-        const remoteSource = this.audioContext.createMediaStreamSource(this.remoteStream);
-        remoteSource.connect(dest);
-        console.log('[WebRTC] Recording MIXED (local + remote)');
-      } else {
-        console.log('[WebRTC] Recording local only (no remote yet)');
-      }
-      streamToRecord = dest.stream;
-    } catch (e) {
-      console.warn('[WebRTC] AudioContext mix failed, recording local:', e);
-      streamToRecord = this.localStream;
-    }
-
-    this.localRecorder = this.createRecorder(streamToRecord, this.localChunks);
+    // Record only MY voice (dedicated stream, no echo cancellation = raw quality)
+    this.localRecorder = this.createRecorder(stream, this.localChunks);
     if (this.localRecorder) {
       this.localRecorder.start(1000);
-      console.log('[WebRTC] Recording started');
+      console.log('[WebRTC] Per-speaker recording started (my mic only)');
     }
   }
 
@@ -258,6 +254,8 @@ export class WebRTCCall {
   async cleanup() {
     this.unsubSignaling?.();
     this.localStream?.getTracks().forEach(t => t.stop());
+    this.recordingStream?.getTracks().forEach(t => t.stop());
+    this.audioContext?.close().catch(() => {});
     this.pc.close();
   }
 }

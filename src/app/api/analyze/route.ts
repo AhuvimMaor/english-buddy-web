@@ -143,16 +143,20 @@ export async function POST(req: NextRequest) {
       `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`
     );
 
+    // Get user names for labeling
+    const callerNameForLabel = (await db.collection('users').doc(callerId).get()).data()?.displayName || 'Caller';
+    const calleeNameForLabel = (await db.collection('users').doc(calleeId).get()).data()?.displayName || 'Callee';
+
     let transcription: string;
 
     try {
-      // Prefer caller recording (usually has both voices via speaker/mic bleed)
-      // If both exist, transcribe both and combine
       if (callerRecording && calleeRecording) {
+        // BEST: Per-speaker recordings - each person's clean mic audio
         const callerTranscript = await transcribeWithElevenLabs(bucket, callerRecording);
         const calleeTranscript = await transcribeWithElevenLabs(bucket, calleeRecording);
-        transcription = `--- Caller's mic ---\n${callerTranscript}\n\n--- Callee's mic ---\n${calleeTranscript}`;
+        transcription = `[${callerNameForLabel}]:\n${callerTranscript}\n\n[${calleeNameForLabel}]:\n${calleeTranscript}`;
       } else {
+        // Fallback: single recording with diarization
         const recording = callerRecording || calleeRecording;
         transcription = await transcribeWithElevenLabs(bucket, recording!);
       }
@@ -165,10 +169,8 @@ export async function POST(req: NextRequest) {
     await callRef.update({ transcription });
     await callRef.update({ analysisStatus: 'analyzing' });
 
-    const callerDoc = await db.collection('users').doc(callerId).get();
-    const calleeDoc = await db.collection('users').doc(calleeId).get();
-    const callerName = callerDoc.data()?.displayName || 'User';
-    const calleeName = calleeDoc.data()?.displayName || 'Partner';
+    const callerName = (await db.collection('users').doc(callerId).get()).data()?.displayName || 'User';
+    const calleeName = (await db.collection('users').doc(calleeId).get()).data()?.displayName || 'Partner';
 
     // Analyze each speaker separately
     const participants = [
