@@ -26,52 +26,80 @@ function getAdminDb() {
   return getFirestore();
 }
 
-async function transcribeFile(bucket: any, path: string): Promise<string> {
+async function transcribeWithElevenLabs(bucket: any, path: string): Promise<string> {
   const file = bucket.file(path);
   const [buffer] = await file.download();
+
+  const formData = new FormData();
   const ext = path.split('.').pop() || 'webm';
-  const { toFile } = require('openai/uploads');
-  const audioFile = await toFile(Buffer.from(buffer), `audio.${ext}`);
-  const result = await getOpenAI().audio.transcriptions.create({
-    file: audioFile,
-    model: 'gpt-4o-transcribe',
+  const blob = new Blob([buffer], { type: ext === 'mp4' || ext === 'm4a' ? 'audio/mp4' : 'audio/webm' });
+  formData.append('file', blob, `audio.${ext}`);
+  formData.append('model_id', 'scribe_v1');
+  formData.append('diarize', 'true');
+  formData.append('language_code', 'eng');
+  formData.append('tag_audio_events', 'false');
+
+  const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    method: 'POST',
+    headers: {
+      'xi-api-key': process.env.ELEVENLABS_API_KEY || '',
+    },
+    body: formData,
   });
-  return result.text || '';
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`ElevenLabs STT failed (${response.status}): ${err}`);
+  }
+
+  const data = await response.json();
+
+  // Build transcript with speaker labels
+  let result = '';
+  let lastSpeaker = '';
+
+  if (data.words && data.words.length > 0) {
+    for (const word of data.words) {
+      const speaker = word.speaker_id || 'unknown';
+      if (speaker !== lastSpeaker) {
+        if (result) result += '\n';
+        result += `[Speaker ${speaker}]: `;
+        lastSpeaker = speaker;
+      }
+      result += (word.text || '') + ' ';
+    }
+  } else if (data.text) {
+    result = data.text;
+  }
+
+  return result.trim();
 }
 
-const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with CLEAR speaker labels:
-- [USER]: is the Hebrew speaker who is LEARNING English
-- [PARTNER]: is the conversation partner helping them practice
+const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with speaker labels (Speaker 1, Speaker 2, etc).
+
+IMPORTANT RULES:
+- Identify which speaker is the LEARNER (uses Hebrew words, makes grammar mistakes, less fluent) and which is the PARTNER (more fluent, helps/corrects)
+- Label the learner as "user" and the helper as "partner" in your output
+- The transcription has real speaker diarization - trust the speaker labels for who said what
 
 Produce a JSON report with:
 
 1. transcript: array of {speaker: "user"|"partner", text: string, corrections: array|null}
-   - IMPORTANT: Break each speaker's text into INDIVIDUAL SENTENCES. Do NOT put all of one speaker's text in one line.
-   - Each sentence or thought should be its own transcript entry
-   - If a speaker says 5 sentences, create 5 separate transcript entries for them
-   - Alternate between speakers to recreate the natural conversation flow
-   - Keep the speaker labels as given ([USER] = "user", [PARTNER] = "partner")
-   - IMPORTANT: When user mixes Hebrew words within an English sentence, keep them INLINE in the text field using Hebrew letters
-   - Example: text="I don't know how to לדבר English good"
-   - Example: text="Yesterday I had a מצגת at work"
-   - If Whisper transcribed Hebrew as Latin (e.g. "ledaber"), convert to Hebrew letters in the text
-   - "corrections" is an array of {wrong: string, right: string, explanation: string} - ONLY the specific word or short phrase that is wrong, NOT the whole sentence
-   - For Hebrew words inline, the correction should provide the English word: {wrong: "לדבר", right: "speak", explanation: "Hebrew word - English equivalent is 'speak'"}
-   - Example: text="I'm doing this for three years", corrections=[{wrong: "I'm doing", right: "I've been doing", explanation: "present perfect continuous for ongoing actions"}]
-   - Example: text="it was very excited", corrections=[{wrong: "excited", right: "exciting", explanation: "use -ing for things that cause the feeling"}]
-   - Example: text="I need to do a מצגת tomorrow", corrections=[{wrong: "מצגת", right: "presentation", explanation: "Hebrew word"}]
+   - IMPORTANT: Break each speaker's text into INDIVIDUAL SENTENCES. Each sentence = separate entry.
+   - Alternate between speakers to recreate natural conversation flow
+   - Map the learner to "user" and helper to "partner"
+   - IMPORTANT: When user mixes Hebrew words within English, keep them INLINE using Hebrew letters
+   - "corrections" is an array of {wrong: string, right: string, explanation: string} - ONLY the specific wrong word/phrase
+   - For Hebrew words inline: {wrong: "מצגת", right: "presentation", explanation: "Hebrew word"}
+   - For grammar errors: {wrong: "more better", right: "better", explanation: "comparative form"}
    - For correct lines or partner lines: corrections should be null or empty array
-   - Do NOT repeat the whole sentence in the correction, only the specific words
 
 2. grammarMistakes: array of {original, corrected, explanation}
-   - Only ENGLISH grammar mistakes from USER's lines
-   - Not Hebrew words/sentences
+   - Only ENGLISH grammar mistakes from the learner
 
 3. hebrewWords: array of {hebrew, english, context}
-   - Hebrew words/phrases the user said
-   - "hebrew" field MUST be in Hebrew letters (תודה not "toda", כן not "ken")
-   - If transcribed in Latin letters, convert to Hebrew script
-   - Provide English translation
+   - "hebrew" MUST be in Hebrew letters (תודה not "toda")
+   - Convert transliterated Hebrew to Hebrew script
 
 4. fluencyScore: number 1-10
 
@@ -97,11 +125,10 @@ export async function POST(req: NextRequest) {
     }
 
     const callData = callDoc.data()!;
-
     const callerId = callData.callerId;
     const calleeId = callData.calleeId;
 
-    // Find recordings - new format: recording_{userId}, old format: recordingPath/partnerRecordingPath
+    // Find recordings
     const callerRecording = callData[`recording_${callerId}`] || callData.recordingPath || null;
     const calleeRecording = callData[`recording_${calleeId}`] || callData.partnerRecordingPath || null;
 
@@ -119,22 +146,15 @@ export async function POST(req: NextRequest) {
     let transcription: string;
 
     try {
-      let callerText = '';
-      let calleeText = '';
-
-      if (callerRecording) {
-        callerText = await transcribeFile(bucket, callerRecording);
-      }
-      if (calleeRecording) {
-        calleeText = await transcribeFile(bucket, calleeRecording);
-      }
-
-      if (callerText && calleeText) {
-        transcription = `[USER]: ${callerText}\n\n[PARTNER]: ${calleeText}`;
-      } else if (callerText) {
-        transcription = `[USER]: ${callerText}`;
+      // Prefer caller recording (usually has both voices via speaker/mic bleed)
+      // If both exist, transcribe both and combine
+      if (callerRecording && calleeRecording) {
+        const callerTranscript = await transcribeWithElevenLabs(bucket, callerRecording);
+        const calleeTranscript = await transcribeWithElevenLabs(bucket, calleeRecording);
+        transcription = `--- Caller's mic ---\n${callerTranscript}\n\n--- Callee's mic ---\n${calleeTranscript}`;
       } else {
-        transcription = `[PARTNER]: ${calleeText}`;
+        const recording = callerRecording || calleeRecording;
+        transcription = await transcribeWithElevenLabs(bucket, recording!);
       }
     } catch (e: any) {
       console.error('Transcription failed:', e.message);
@@ -145,15 +165,15 @@ export async function POST(req: NextRequest) {
     await callRef.update({ transcription });
     await callRef.update({ analysisStatus: 'analyzing' });
 
-    const callerDoc = await db.collection('users').doc(callData.callerId).get();
-    const calleeDoc = await db.collection('users').doc(callData.calleeId).get();
+    const callerDoc = await db.collection('users').doc(callerId).get();
+    const calleeDoc = await db.collection('users').doc(calleeId).get();
     const callerName = callerDoc.data()?.displayName || 'User';
     const calleeName = calleeDoc.data()?.displayName || 'Partner';
 
-    // Analyze each speaker separately - each gets their own personalized report
+    // Analyze each speaker separately
     const participants = [
-      { userId: callData.callerId, partnerId: callData.calleeId, name: callerName, speakerLabel: 'USER', partnerLabel: 'PARTNER' },
-      { userId: callData.calleeId, partnerId: callData.callerId, name: calleeName, speakerLabel: 'PARTNER', partnerLabel: 'USER' },
+      { userId: callerId, partnerId: calleeId, name: callerName, role: 'caller' },
+      { userId: calleeId, partnerId: callerId, name: calleeName, role: 'callee' },
     ];
 
     for (const participant of participants) {
@@ -164,26 +184,19 @@ export async function POST(req: NextRequest) {
           { role: 'system', content: SYSTEM_PROMPT },
           {
             role: 'user',
-            content: `Analyze this conversation for "${participant.name}". Their lines are labeled [${participant.speakerLabel}]. Analyze ONLY their English - find grammar mistakes, Hebrew words, and score THEIR fluency. The other speaker [${participant.partnerLabel}] is their conversation partner.\n\n${transcription}`,
+            content: `Analyze this conversation for "${participant.name}" (the ${participant.role}). Find THEIR grammar mistakes, Hebrew words, and score THEIR fluency. Show the full conversation but corrections only for their lines.\n\n${transcription}`,
           },
         ],
       });
 
       const analysis = JSON.parse(completion.choices[0].message.content || '{}');
-      const transcript = (analysis.transcript || []).map((line: any) => {
-        // Flip labels so "user" always means the person viewing the report
-        if (participant.speakerLabel === 'PARTNER') {
-          return { ...line, speaker: line.speaker === 'user' ? 'partner' : 'user' };
-        }
-        return line;
-      });
 
       await db.collection('reports').add({
         callId,
         userId: participant.userId,
         partnerId: participant.partnerId,
         callDuration: callData.durationSeconds || 0,
-        transcript,
+        transcript: analysis.transcript || [],
         grammarMistakes: analysis.grammarMistakes || [],
         hebrewWords: analysis.hebrewWords || [],
         fluencyScore: analysis.fluencyScore || null,
@@ -193,10 +206,10 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Update call stats for both users
+    // Update call stats
     const durationMinutes = (callData.durationSeconds || 0) / 60;
     const { FieldValue } = require('firebase-admin/firestore');
-    for (const uid of [callData.callerId, callData.calleeId]) {
+    for (const uid of [callerId, calleeId]) {
       try {
         await db.collection('users').doc(uid).update({
           callCount: FieldValue.increment(1),
