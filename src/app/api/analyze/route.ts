@@ -36,7 +36,6 @@ async function transcribeWithElevenLabs(bucket: any, path: string): Promise<stri
   formData.append('file', blob, `audio.${ext}`);
   formData.append('model_id', 'scribe_v1');
   formData.append('diarize', 'true');
-  formData.append('language_code', 'eng');
   formData.append('tag_audio_events', 'false');
 
   const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
@@ -62,11 +61,12 @@ async function transcribeWithElevenLabs(bucket: any, path: string): Promise<stri
     for (const word of data.words) {
       const speaker = word.speaker_id || 'unknown';
       if (speaker !== lastSpeaker) {
-        if (result) result += '\n';
+        if (result) result = result.trimEnd() + '\n';
         result += `[Speaker ${speaker}]: `;
         lastSpeaker = speaker;
       }
-      result += (word.text || '') + ' ';
+      const text = (word.text || '').trim();
+      if (text) result += text + ' ';
     }
   } else if (data.text) {
     result = data.text;
