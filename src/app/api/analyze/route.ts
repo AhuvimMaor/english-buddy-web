@@ -46,7 +46,10 @@ const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. Yo
 Produce a JSON report with:
 
 1. transcript: array of {speaker: "user"|"partner", text: string, corrections: array|null}
-   - Include EVERY line exactly as transcribed
+   - IMPORTANT: Break each speaker's text into INDIVIDUAL SENTENCES. Do NOT put all of one speaker's text in one line.
+   - Each sentence or thought should be its own transcript entry
+   - If a speaker says 5 sentences, create 5 separate transcript entries for them
+   - Alternate between speakers to recreate the natural conversation flow
    - Keep the speaker labels as given ([USER] = "user", [PARTNER] = "partner")
    - IMPORTANT: When user mixes Hebrew words within an English sentence, keep them INLINE in the text field using Hebrew letters
    - Example: text="I don't know how to לדבר English good"
