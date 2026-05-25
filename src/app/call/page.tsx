@@ -7,6 +7,8 @@ import { db, storage } from '@/lib/firebase';
 import { doc, addDoc, collection, onSnapshot, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
 import { WebRTCCall } from '@/lib/webrtc';
+import { Capacitor } from '@capacitor/core';
+import { AudioToggle } from '@anuradev/capacitor-audio-toggle';
 
 function CallContent() {
   const { firebaseUser } = useAuthContext();
@@ -36,6 +38,13 @@ function CallContent() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  // Ensure speaker state is correctly synced with native when connected
+  useEffect(() => {
+    if (status === 'connected' && Capacitor.isNativePlatform()) {
+      AudioToggle.setSpeakerOn({ speakerOn }).catch(console.error);
+    }
+  }, [status]); // deliberately omitting speakerOn to run just once when connected
 
   // Caller hears "toot...toot...toot" dial tone
   useEffect(() => {
@@ -384,10 +393,18 @@ function CallContent() {
         </button>
 
         <button
-          onClick={() => {
-            setSpeakerOn(!speakerOn);
-            if (remoteAudioRef.current) {
-              (remoteAudioRef.current as any).setSinkId?.(speakerOn ? 'earpiece' : 'default').catch(() => {});
+          onClick={async () => {
+            const nextSpeaker = !speakerOn;
+            setSpeakerOn(nextSpeaker);
+            
+            if (Capacitor.isNativePlatform()) {
+              try {
+                await AudioToggle.setSpeakerOn({ speakerOn: nextSpeaker });
+              } catch (e) {
+                console.error('AudioToggle error', e);
+              }
+            } else if (remoteAudioRef.current) {
+              (remoteAudioRef.current as any).setSinkId?.(!nextSpeaker ? 'earpiece' : 'default').catch(() => {});
             }
           }}
           className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition active:scale-90 ${
