@@ -35,13 +35,21 @@ function PartnerCard({ user, onCall, index }: { user: UserProfile; onCall: () =>
       style={{ boxShadow: 'var(--shadow-sm)' }}
     >
       <div className="relative">
-        <div className={`w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold ${
-          status.available
-            ? 'bg-gradient-to-br from-[var(--accent-blue)] to-[var(--accent-purple)]'
-            : 'bg-gray-300'
-        }`}>
-          {user.displayName.charAt(0).toUpperCase()}
-        </div>
+        {user.photoURL ? (
+          <img 
+            src={user.photoURL} 
+            alt={user.displayName}
+            className={`w-14 h-14 rounded-full object-cover ${!status.available ? 'grayscale' : ''}`}
+          />
+        ) : (
+          <div className={`w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold ${
+            status.available
+              ? 'bg-gradient-to-br from-[var(--accent-blue)] to-[var(--accent-purple)]'
+              : 'bg-gray-300'
+          }`}>
+            {user.displayName.charAt(0).toUpperCase()}
+          </div>
+        )}
         <div className={`absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full border-2 border-white ${status.dot}`} />
       </div>
 
