@@ -42,7 +42,10 @@ function CallContent() {
   // Ensure speaker state is correctly synced with native when connected
   useEffect(() => {
     if (status === 'connected' && Capacitor.isNativePlatform()) {
-      AudioToggle.setSpeakerOn({ speakerOn }).catch(console.error);
+      // Delay slightly on initial connect to let WebRTC finish audio session setup
+      setTimeout(() => {
+        AudioToggle.setSpeakerOn({ speakerOn }).catch(console.error);
+      }, 1000);
     }
   }, [status]); // deliberately omitting speakerOn to run just once when connected
 

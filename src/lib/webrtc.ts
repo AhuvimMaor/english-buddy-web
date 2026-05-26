@@ -101,17 +101,9 @@ export class WebRTCCall {
     this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     this.localStream.getTracks().forEach(t => this.pc.addTrack(t, this.localStream!));
 
-    // Get SEPARATE mic stream for recording (independent from WebRTC processing)
-    try {
-      this.recordingStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-      });
-      console.log('[WebRTC] Dedicated recording stream created');
-    } catch {
-      // Fallback: clone the WebRTC stream
-      this.recordingStream = this.localStream.clone();
-      console.log('[WebRTC] Using cloned stream for recording');
-    }
+    // Clone the stream for recording
+    this.recordingStream = this.localStream.clone();
+    console.log('[WebRTC] Using cloned stream for recording');
 
     this.listenSignaling();
     return this.localStream;

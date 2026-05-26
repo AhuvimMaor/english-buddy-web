@@ -102,8 +102,9 @@ Produce a JSON report with:
    - Convert transliterated Hebrew to Hebrew script
 
 4. fluencyScore: number 1-10
-   - IMPORTANT: If the learner speaks ONLY or mostly Hebrew and fails to construct English sentences, the score MUST be very low (1-3).
-   - Reserve 8-10 for highly fluent English speakers.
+   - CRITICAL: If the learner speaks ONLY or predominantly Hebrew, the fluency score MUST be very low (1, 2, or 3 max) regardless of how fluent their Hebrew is.
+   - Do NOT give a score higher than 3 if they don't speak English.
+   - Reserve 8-10 ONLY for highly fluent English speakers.
 
 5. summary: 2-3 sentences encouraging feedback
 
