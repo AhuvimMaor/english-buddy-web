@@ -35,6 +35,7 @@ async function transcribeWithElevenLabs(bucket: any, path: string): Promise<stri
   const blob = new Blob([buffer], { type: ext === 'mp4' || ext === 'm4a' ? 'audio/mp4' : 'audio/webm' });
   formData.append('file', blob, `audio.${ext}`);
   formData.append('model_id', 'scribe_v1');
+  formData.append('language_code', 'eng'); // Set to English, but Scribe supports 32 languages automatically
   formData.append('diarize', 'true');
   formData.append('tag_audio_events', 'false');
 
@@ -76,11 +77,13 @@ async function transcribeWithElevenLabs(bucket: any, path: string): Promise<stri
 }
 
 const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with speaker labels (Speaker 1, Speaker 2, etc).
+Note: The transcription might be slightly inaccurate or phonetic if the speakers mixed Hebrew and English, because the STT model might try to transcribe Hebrew words with English letters.
 
 IMPORTANT RULES:
 - Identify which speaker is the LEARNER (uses Hebrew words, makes grammar mistakes, less fluent) and which is the PARTNER (more fluent, helps/corrects)
 - Label the learner as "user" and the helper as "partner" in your output
 - The transcription has real speaker diarization - trust the speaker labels for who said what
+- If you see gibberish English that sounds like Hebrew (e.g., "ma kore", "beseder", "toda"), interpret it as Hebrew.
 
 Produce a JSON report with:
 
