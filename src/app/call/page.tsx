@@ -248,10 +248,26 @@ function CallContent() {
   const requestMicAndStart = async () => {
     try {
       await initCall();
+      localStorage.setItem('mic_granted', '1');
     } catch (err: any) {
       if (mountedRef.current) setError(`Call failed: ${err.message}`);
     }
   };
+
+  // Auto-start if mic already granted
+  useEffect(() => {
+    if (status !== 'mic' || !firebaseUser || !partnerId) return;
+
+    if (localStorage.getItem('mic_granted') === '1') {
+      initCall().catch(() => {});
+    } else if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'microphone' as any }).then(res => {
+        if (res.state === 'granted' && mountedRef.current) {
+          initCall().catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  }, [firebaseUser, partnerId, status, initCall]);
 
   const handleEnd = async () => {
     if (endingRef.current) return;
