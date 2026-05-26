@@ -235,12 +235,20 @@ export class WebRTCCall {
 
   toggleMute(): boolean {
     if (!this.localStream) return false;
-    const track = this.localStream.getAudioTracks()[0];
-    if (track) {
+    let isMuted = false;
+    this.localStream.getAudioTracks().forEach(track => {
       track.enabled = !track.enabled;
-      return !track.enabled;
+      isMuted = !track.enabled;
+    });
+    
+    // Make sure we also mute the recording stream so we don't record silence/noise while muted
+    if (this.recordingStream) {
+      this.recordingStream.getAudioTracks().forEach(track => {
+        track.enabled = !isMuted;
+      });
     }
-    return false;
+    
+    return isMuted;
   }
 
   async cleanup() {

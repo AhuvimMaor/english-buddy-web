@@ -9,6 +9,7 @@ import { ref, uploadBytes } from 'firebase/storage';
 import { WebRTCCall } from '@/lib/webrtc';
 import { Capacitor } from '@capacitor/core';
 import { AudioToggle } from '@anuradev/capacitor-audio-toggle';
+import { AudioSession } from '@capgo/capacitor-audio-session';
 
 function CallContent() {
   const { firebaseUser } = useAuthContext();
@@ -44,7 +45,11 @@ function CallContent() {
     if (status === 'connected' && Capacitor.isNativePlatform()) {
       // Delay slightly on initial connect to let WebRTC finish audio session setup
       setTimeout(() => {
-        AudioToggle.setSpeakerOn({ speakerOn }).catch(console.error);
+        if (Capacitor.getPlatform() === 'ios') {
+          AudioSession.overrideOutput({ type: speakerOn ? 'speaker' : 'default' } as any).catch(console.error);
+        } else {
+          AudioToggle.setSpeakerOn({ speakerOn }).catch(console.error);
+        }
       }, 1000);
     }
   }, [status]); // deliberately omitting speakerOn to run just once when connected
@@ -418,9 +423,13 @@ function CallContent() {
             
             if (Capacitor.isNativePlatform()) {
               try {
-                await AudioToggle.setSpeakerOn({ speakerOn: nextSpeaker });
+                if (Capacitor.getPlatform() === 'ios') {
+                  await AudioSession.overrideOutput({ type: nextSpeaker ? 'speaker' : 'default' } as any);
+                } else {
+                  await AudioToggle.setSpeakerOn({ speakerOn: nextSpeaker });
+                }
               } catch (e) {
-                console.error('AudioToggle error', e);
+                console.error('Audio routing error', e);
               }
             } else if (remoteAudioRef.current) {
               (remoteAudioRef.current as any).setSinkId?.(!nextSpeaker ? 'earpiece' : 'default').catch(() => {});
