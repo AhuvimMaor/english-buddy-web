@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
@@ -26,54 +26,21 @@ function getAdminDb() {
   return getFirestore();
 }
 
-async function transcribeWithElevenLabs(bucket: any, path: string): Promise<string> {
+async function transcribeWithOpenAI(bucket: any, path: string): Promise<string> {
   const file = bucket.file(path);
   const [buffer] = await file.download();
 
-  const formData = new FormData();
   const ext = path.split('.').pop() || 'webm';
-  const blob = new Blob([buffer], { type: ext === 'mp4' || ext === 'm4a' ? 'audio/mp4' : 'audio/webm' });
-  formData.append('file', blob, `audio.${ext}`);
-  formData.append('model_id', 'scribe_v1');
-  formData.append('language_code', 'eng'); // Set to English, but Scribe supports 32 languages automatically
-  formData.append('diarize', 'true');
-  formData.append('tag_audio_events', 'false');
+  const audioFile = await toFile(buffer, `audio.${ext}`);
 
-  const response = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-    method: 'POST',
-    headers: {
-      'xi-api-key': process.env.ELEVENLABS_API_KEY || '',
-    },
-    body: formData,
+  const openai = getOpenAI();
+  const response = await openai.audio.transcriptions.create({
+    file: audioFile,
+    model: 'whisper-1',
+    prompt: 'This is an English conversation that might contain mixed Hebrew words like shalom, beseder, sababa, etc.',
   });
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`ElevenLabs STT failed (${response.status}): ${err}`);
-  }
-
-  const data = await response.json();
-
-  // Build transcript with speaker labels
-  let result = '';
-  let lastSpeaker = '';
-
-  if (data.words && data.words.length > 0) {
-    for (const word of data.words) {
-      const speaker = word.speaker_id || 'unknown';
-      if (speaker !== lastSpeaker) {
-        if (result) result = result.trimEnd() + '\n';
-        result += `[Speaker ${speaker}]: `;
-        lastSpeaker = speaker;
-      }
-      const text = (word.text || '').trim();
-      if (text) result += text + ' ';
-    }
-  } else if (data.text) {
-    result = data.text;
-  }
-
-  return result.trim();
+  return response.text.trim();
 }
 
 const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with speaker labels (Speaker 1, Speaker 2, etc).
@@ -158,13 +125,13 @@ export async function POST(req: NextRequest) {
     try {
       if (callerRecording && calleeRecording) {
         // BEST: Per-speaker recordings - each person's clean mic audio
-        const callerTranscript = await transcribeWithElevenLabs(bucket, callerRecording);
-        const calleeTranscript = await transcribeWithElevenLabs(bucket, calleeRecording);
+        const callerTranscript = await transcribeWithOpenAI(bucket, callerRecording);
+        const calleeTranscript = await transcribeWithOpenAI(bucket, calleeRecording);
         transcription = `[${callerNameForLabel}]:\n${callerTranscript}\n\n[${calleeNameForLabel}]:\n${calleeTranscript}`;
       } else {
         // Fallback: single recording with diarization
         const recording = callerRecording || calleeRecording;
-        transcription = await transcribeWithElevenLabs(bucket, recording!);
+        transcription = await transcribeWithOpenAI(bucket, recording!);
       }
     } catch (e: any) {
       console.error('Transcription failed:', e.message);
