@@ -25,9 +25,12 @@ function ProcessingContent() {
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>('pending');
   const [failed, setFailed] = useState(false);
   const [failMessage, setFailMessage] = useState('');
+  const [timedOut, setTimedOut] = useState(false);
   const triggeredRef = useRef(false);
 
-  // Trigger analysis API
+  // Trigger analysis API. The request can run for several minutes on a long
+  // call, so the Firestore listener below is the source of truth for
+  // progress/completion — we only surface *definitive* errors from here.
   useEffect(() => {
     if (!callId || triggeredRef.current) return;
     triggeredRef.current = true;
@@ -38,15 +41,19 @@ function ProcessingContent() {
       body: JSON.stringify({ callId }),
     })
       .then(async (res) => {
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          setFailed(true);
-          setFailMessage(data.error || `Server error: ${res.status}`);
-        }
+        if (res.ok) return;
+        // Gateway timeouts (502/503/504) happen when the edge proxy gives up
+        // while the server keeps processing — not fatal, let the listener win.
+        if (res.status >= 502 && res.status <= 504) return;
+        const data = await res.json().catch(() => ({}));
+        setFailed(true);
+        setFailMessage(data.error || `Server error: ${res.status}`);
       })
       .catch((err) => {
-        setFailed(true);
-        setFailMessage(err.message || 'Network error');
+        // Network error / proxy timeout: the request may still be processing
+        // server-side. Don't fail here — the listener reports progress, and the
+        // stall guard covers a request that truly never started.
+        console.warn('[Processing] analyze request did not return cleanly:', err?.message || err);
       });
   }, [callId]);
 
@@ -76,16 +83,17 @@ function ProcessingContent() {
     return unsub;
   }, [callId, router]);
 
-  // Timeout after 2 minutes
+  // Stall guard: this effect re-runs on every status change, so the timer
+  // resets each time analysis advances. A long (e.g. 1-hour) call can take
+  // several minutes per phase, so only show a calm "check later" note if a
+  // single phase makes no progress for a while. Not a hard failure.
   useEffect(() => {
+    if (failed || timedOut || analysisStatus === 'complete') return;
     const timeout = setTimeout(() => {
-      if (analysisStatus !== 'complete' && !failed) {
-        setFailed(true);
-        setFailMessage('Analysis timed out. Check History later for results.');
-      }
-    }, 120000);
+      setTimedOut(true);
+    }, 8 * 60 * 1000); // 8 minutes with no progress
     return () => clearTimeout(timeout);
-  }, [analysisStatus, failed]);
+  }, [analysisStatus, failed, timedOut]);
 
   const currentStep = getStepIndex(analysisStatus);
   const progress = failed ? 100 : ((currentStep + 1) / STEPS.length) * 100;
@@ -95,21 +103,25 @@ function ProcessingContent() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="text-5xl mb-4">
-            {failed ? '❌' : analysisStatus === 'complete' ? '✅' : '⏳'}
+            {failed ? '❌' : analysisStatus === 'complete' ? '✅' : timedOut ? '🕐' : '⏳'}
           </div>
           <h1 className="text-xl font-bold text-gray-900">
             {failed
               ? 'Analysis Failed'
               : analysisStatus === 'complete'
                 ? 'Report Ready!'
-                : 'Processing Your Call'}
+                : timedOut
+                  ? 'Still Working On It'
+                  : 'Processing Your Call'}
           </h1>
           <p className="text-gray-500 mt-1 text-sm">
             {failed
               ? failMessage
               : analysisStatus === 'complete'
                 ? 'Redirecting to your report...'
-                : 'This usually takes 1-2 minutes'}
+                : timedOut
+                  ? 'This is taking longer than usual. Your report will appear in History when it is ready.'
+                  : 'This usually takes 1-2 minutes'}
           </p>
         </div>
 
@@ -162,12 +174,12 @@ function ProcessingContent() {
         <div className="text-center mt-6">
           <button
             onClick={() => router.push('/partners')}
-            className={failed
+            className={failed || timedOut
               ? "px-6 py-2 bg-blue-500 text-white font-semibold rounded-xl hover:bg-blue-600 transition"
               : "text-sm text-gray-400 hover:text-gray-600 transition"
             }
           >
-            {failed ? 'Back to Partners' : "Skip - I'll check the report later"}
+            {failed || timedOut ? 'Back to Partners' : "Skip - I'll check the report later"}
           </button>
         </div>
       </div>
