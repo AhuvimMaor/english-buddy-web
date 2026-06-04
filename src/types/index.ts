@@ -43,6 +43,13 @@ export interface Call {
   transcription: string | null;
   analysisStatus: AnalysisStatus;
   createdAt: Timestamp;
+  // Per-speaker recording fields are written at runtime with the speaker's uid
+  // in the key, so they can't be statically typed on this interface:
+  //   recording_${uid}: string              - legacy single-file path (fallback)
+  //   recordingChunkPrefix_${uid}: string    - chunked upload folder prefix
+  //   recordingChunkCount_${uid}: number     - number of uploaded slices
+  //   recordingMime_${uid}: string           - MediaRecorder mime of the slices
+  // See resolveRecording() in src/lib/recording.ts for how these are read.
 }
 
 export interface GrammarMistake {

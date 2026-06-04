@@ -1,7 +1,14 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /recordings/{callId}/{userId}.aac {
+    // Single-file recording (legacy / fallback): recordings/{callId}/{userId}.{ext}
+    // The file name is "<uid>.<ext>", so the owner is the part before the dot.
+    match /recordings/{callId}/{fileName} {
+      allow write: if request.auth != null && fileName.split('\\.')[0] == request.auth.uid;
+      allow read: if request.auth != null;
+    }
+    // Chunked recording slices: recordings/{callId}/{userId}/chunk-NNNNNN.{ext}
+    match /recordings/{callId}/{userId}/{chunkFile} {
       allow write: if request.auth != null && request.auth.uid == userId;
       allow read: if request.auth != null;
     }
