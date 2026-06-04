@@ -8,7 +8,7 @@
     "start": "next start",
     "test": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:watch": "vitest --exclude \"**/*.integration.test.ts\"",
-    "test:integration": "firebase emulators:exec --only firestore,storage \"vitest run src/app/api/analyze\""
+    "test:integration": "npx -y firebase-tools emulators:exec --only firestore,storage --project demo-english-buddy \"vitest run src/app/api/analyze\""
   },
   "dependencies": {
     "@anuradev/capacitor-audio-toggle": "^7.0.0",
