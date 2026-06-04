@@ -99,7 +99,8 @@ Output valid JSON only.`;
 
 export async function POST(req: NextRequest) {
   try {
-    const { callId } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { callId } = body;
     if (!callId) {
       return NextResponse.json({ error: 'callId required' }, { status: 400 });
     }
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
     const callerRecording = callData[`recording_${callerId}`] || callData.recordingPath || null;
     const calleeRecording = callData[`recording_${calleeId}`] || callData.partnerRecordingPath || null;
 
-    const force = req.nextUrl?.searchParams?.get('force') === 'true' || (await req.clone().json().catch(()=>({}))).force;
+    const force = req.nextUrl?.searchParams?.get('force') === 'true' || body.force === true;
 
     if (!callerRecording && !calleeRecording) {
       return NextResponse.json({ error: 'No recording found yet' }, { status: 400 });
