@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI, { toFile } from 'openai';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+
+export const maxDuration = 300; // Allow up to 5 minutes on Vercel
 
 function getOpenAI() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -26,7 +28,13 @@ function getAdminDb() {
   return getFirestore();
 }
 
-async function transcribeWithOpenAI(bucket: any, path: string): Promise<string> {
+interface TranscriptSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+async function transcribeSegmentsWithOpenAI(bucket: any, path: string): Promise<TranscriptSegment[]> {
   const file = bucket.file(path);
   const [buffer] = await file.download();
 
@@ -37,10 +45,16 @@ async function transcribeWithOpenAI(bucket: any, path: string): Promise<string> 
   const response = await openai.audio.transcriptions.create({
     file: audioFile,
     model: 'whisper-1',
+    response_format: 'verbose_json',
+    timestamp_granularities: ['segment'],
     prompt: 'This is an English conversation that might contain mixed Hebrew words like shalom, beseder, sababa, etc.',
-  });
+  }) as any;
 
-  return response.text.trim();
+  return (response.segments || [{ start: 0, end: 0, text: response.text }]).map((seg: any) => ({
+    start: seg.start || 0,
+    end: seg.end || 0,
+    text: seg.text.trim()
+  }));
 }
 
 const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with speaker labels (Speaker 1, Speaker 2, etc).
@@ -51,6 +65,7 @@ IMPORTANT RULES:
 - Label the learner as "user" and the helper as "partner" in your output
 - The transcription has real speaker diarization - trust the speaker labels for who said what
 - If you see gibberish English that sounds like Hebrew (e.g., "ma kore", "beseder", "toda"), interpret it as Hebrew.
+- CRITICAL: Do NOT just translate Hebrew words. You MUST actively identify and correct poor English grammar, wrong syntax, incorrect verb tenses, awkward phrasing, and missing prepositions (e.g., "I am going to home" -> "I am going home", "I didn't went" -> "I didn't go"). 
 
 Produce a JSON report with:
 
@@ -61,11 +76,11 @@ Produce a JSON report with:
    - IMPORTANT: When user mixes Hebrew words within English, keep them INLINE using Hebrew letters
    - "corrections" is an array of {wrong: string, right: string, explanation: string} - ONLY the specific wrong word/phrase
    - For Hebrew words inline: {wrong: "מצגת", right: "presentation", explanation: "Hebrew word"}
-   - For grammar errors: {wrong: "more better", right: "better", explanation: "comparative form"}
+   - For grammar and syntax errors: {wrong: "more better", right: "better", explanation: "grammar/syntax correction"}
    - For correct lines or partner lines: corrections should be null or empty array
 
 2. grammarMistakes: array of {original, corrected, explanation}
-   - Only ENGLISH grammar mistakes from the learner
+   - Must comprehensively capture all ENGLISH grammar mistakes, syntax errors, and awkward phrasings from the learner. DO NOT limit this to just translated Hebrew words.
 
 3. hebrewWords: array of {hebrew, english, context}
    - "hebrew" MUST be in Hebrew letters (תודה not "toda")
@@ -98,6 +113,12 @@ export async function POST(req: NextRequest) {
     }
 
     const callData = callDoc.data()!;
+    
+    // Prevent double execution
+    if (callData.analysisStatus === 'transcribing' || callData.analysisStatus === 'analyzing' || callData.analysisStatus === 'complete') {
+      return NextResponse.json({ success: true, message: 'Already processing' }, { status: 200 });
+    }
+    
     const callerId = callData.callerId;
     const calleeId = callData.calleeId;
 
@@ -105,12 +126,33 @@ export async function POST(req: NextRequest) {
     const callerRecording = callData[`recording_${callerId}`] || callData.recordingPath || null;
     const calleeRecording = callData[`recording_${calleeId}`] || callData.partnerRecordingPath || null;
 
+    const force = req.nextUrl?.searchParams?.get('force') === 'true' || (await req.clone().json().catch(()=>({}))).force;
+
     if (!callerRecording && !calleeRecording) {
-      await callRef.update({ analysisStatus: 'failed' });
-      return NextResponse.json({ error: 'No recording found' }, { status: 400 });
+      return NextResponse.json({ error: 'No recording found yet' }, { status: 400 });
     }
 
-    await callRef.update({ analysisStatus: 'transcribing' });
+    if ((!callerRecording || !calleeRecording) && !force) {
+      // One is missing, wait for the other to upload before starting analysis
+      return NextResponse.json({ success: true, message: 'Waiting for partner recording' }, { status: 200 });
+    }
+
+    // Try an atomic update to lock the analysis process
+    try {
+      await db.runTransaction(async (t) => {
+        const doc = await t.get(callRef);
+        const data = doc.data()!;
+        if (data.analysisStatus === 'transcribing' || data.analysisStatus === 'analyzing' || data.analysisStatus === 'complete') {
+          throw new Error('ALREADY_PROCESSING');
+        }
+        t.update(callRef, { analysisStatus: 'transcribing' });
+      });
+    } catch (e: any) {
+      if (e.message === 'ALREADY_PROCESSING') {
+        return NextResponse.json({ success: true, message: 'Already processing' }, { status: 200 });
+      }
+      throw e;
+    }
 
     const bucket = require('firebase-admin/storage').getStorage().bucket(
       `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`
@@ -125,13 +167,25 @@ export async function POST(req: NextRequest) {
     try {
       if (callerRecording && calleeRecording) {
         // BEST: Per-speaker recordings - each person's clean mic audio
-        const callerTranscript = await transcribeWithOpenAI(bucket, callerRecording);
-        const calleeTranscript = await transcribeWithOpenAI(bucket, calleeRecording);
-        transcription = `[${callerNameForLabel}]:\n${callerTranscript}\n\n[${calleeNameForLabel}]:\n${calleeTranscript}`;
+        // Parallelize transcription
+        const [callerSegments, calleeSegments] = await Promise.all([
+          transcribeSegmentsWithOpenAI(bucket, callerRecording),
+          transcribeSegmentsWithOpenAI(bucket, calleeRecording)
+        ]);
+
+        // Combine and sort chronologically by start time
+        const combinedSegments = [
+          ...callerSegments.map(seg => ({ ...seg, speaker: callerNameForLabel })),
+          ...calleeSegments.map(seg => ({ ...seg, speaker: calleeNameForLabel }))
+        ];
+        
+        combinedSegments.sort((a, b) => a.start - b.start);
+        transcription = combinedSegments.map(seg => `[${seg.speaker}]: ${seg.text}`).join('\n');
       } else {
-        // Fallback: single recording with diarization
+        // Fallback: single recording
         const recording = callerRecording || calleeRecording;
-        transcription = await transcribeWithOpenAI(bucket, recording!);
+        const segments = await transcribeSegmentsWithOpenAI(bucket, recording!);
+        transcription = segments.map(seg => seg.text).join('\n');
       }
     } catch (e: any) {
       console.error('Transcription failed:', e.message);
@@ -151,40 +205,44 @@ export async function POST(req: NextRequest) {
       { userId: calleeId, partnerId: callerId, name: calleeName, role: 'callee' },
     ];
 
-    for (const participant of participants) {
-      const completion = await getOpenAI().chat.completions.create({
-        model: 'gpt-4o',
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `Analyze this conversation for "${participant.name}" (the ${participant.role}). Find THEIR grammar mistakes, Hebrew words, and score THEIR fluency. Show the full conversation but corrections only for their lines.\n\n${transcription}`,
-          },
-        ],
-      });
+    // Parallelize LLM analysis and report creation
+    await Promise.all(participants.map(async (participant) => {
+      try {
+        const completion = await getOpenAI().chat.completions.create({
+          model: 'gpt-4o',
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            {
+              role: 'user',
+              content: `Analyze this conversation for "${participant.name}" (the ${participant.role}). Find THEIR grammar mistakes, Hebrew words, and score THEIR fluency. Show the full conversation but corrections only for their lines.\n\n${transcription}`,
+            },
+          ],
+        });
 
-      const analysis = JSON.parse(completion.choices[0].message.content || '{}');
+        const analysis = JSON.parse(completion.choices[0].message.content || '{}');
 
-      await db.collection('reports').add({
-        callId,
-        userId: participant.userId,
-        partnerId: participant.partnerId,
-        callDuration: callData.durationSeconds || 0,
-        transcript: analysis.transcript || [],
-        grammarMistakes: analysis.grammarMistakes || [],
-        hebrewWords: analysis.hebrewWords || [],
-        fluencyScore: analysis.fluencyScore || null,
-        summary: analysis.summary || '',
-        tips: analysis.tips || [],
-        createdAt: new Date(),
-      });
-    }
+        await db.collection('reports').add({
+          callId,
+          userId: participant.userId,
+          partnerId: participant.partnerId,
+          callDuration: callData.durationSeconds || 0,
+          transcript: analysis.transcript || [],
+          grammarMistakes: analysis.grammarMistakes || [],
+          hebrewWords: analysis.hebrewWords || [],
+          fluencyScore: analysis.fluencyScore || null,
+          summary: analysis.summary || '',
+          tips: analysis.tips || [],
+          createdAt: new Date(),
+        });
+      } catch (err) {
+        console.error(`Failed analysis for ${participant.name}:`, err);
+      }
+    }));
 
     // Update call stats
     const durationMinutes = (callData.durationSeconds || 0) / 60;
-    const { FieldValue } = require('firebase-admin/firestore');
-    for (const uid of [callerId, calleeId]) {
+    await Promise.all([callerId, calleeId].map(async (uid) => {
       try {
         await db.collection('users').doc(uid).update({
           callCount: FieldValue.increment(1),
@@ -193,7 +251,7 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         console.error(`Failed to update stats for ${uid}:`, e);
       }
-    }
+    }));
 
     await callRef.update({ analysisStatus: 'complete' });
     return NextResponse.json({ success: true });
