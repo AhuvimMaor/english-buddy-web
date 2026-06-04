@@ -54,6 +54,7 @@ async function transcribeBuffer(buffer: Buffer, ext: string): Promise<Transcript
     model: 'whisper-1',
     response_format: 'verbose_json',
     timestamp_granularities: ['segment'],
+    language: 'en',
     prompt: 'This is an English conversation that might contain mixed Hebrew words like shalom, beseder, sababa, etc.',
   }) as any;
 
