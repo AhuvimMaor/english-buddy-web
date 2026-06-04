@@ -2,6 +2,7 @@ import { db } from './firebase';
 import {
   doc, collection, addDoc, onSnapshot, serverTimestamp,
 } from 'firebase/firestore';
+import { CHUNK_TIMESLICE_MS } from './recording';
 
 const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
@@ -35,6 +36,11 @@ export class WebRTCCall {
   private recordingStream: MediaStream | null = null;
   private localRecorder: MediaRecorder | null = null;
   private localChunks: Blob[] = [];
+  private chunkIndex = 0;
+  // Called for each recorded slice so the caller can upload it during the call.
+  // Set this before startRecording(); leaving it null preserves the legacy
+  // accumulate-and-upload-at-end behaviour.
+  onChunk: ((blob: Blob, index: number, mime: string) => void) | null = null;
   private callId: string;
   private userId: string;
   private unsubSignaling: (() => void) | null = null;
@@ -210,13 +216,34 @@ export class WebRTCCall {
     }
 
     this.localChunks = [];
+    this.chunkIndex = 0;
 
     // Record only MY voice (dedicated stream, no echo cancellation = raw quality)
     this.localRecorder = this.createRecorder(stream, this.localChunks);
     if (this.localRecorder) {
-      this.localRecorder.start(1000);
+      // Second listener: do NOT clobber createRecorder's ondataavailable (the
+      // localChunks accumulation that powers the single-blob fallback). Each
+      // slice is the same data; concatenating the slices server-side is
+      // byte-identical to new Blob(localChunks).
+      this.localRecorder.addEventListener('dataavailable', (e) => {
+        if (e.data.size > 0 && this.onChunk) {
+          // Synchronous increment guarantees monotonic, gap-free ordering
+          // regardless of when each async upload completes.
+          const index = this.chunkIndex++;
+          this.onChunk(e.data, index, this.localRecorder!.mimeType || 'audio/webm');
+        }
+      });
+      this.localRecorder.start(CHUNK_TIMESLICE_MS);
       console.log('[WebRTC] Per-speaker recording started (my mic only)');
     }
+  }
+
+  getChunkCount(): number {
+    return this.chunkIndex;
+  }
+
+  getRecordingMime(): string {
+    return this.localRecorder?.mimeType || 'audio/webm';
   }
 
   stopRecording(): Blob | null {
