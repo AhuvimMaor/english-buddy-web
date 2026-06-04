@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI, { toFile } from 'openai';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import {
   resolveRecording,
   sortChunkFilesByIndex,
@@ -193,7 +194,7 @@ export async function POST(req: NextRequest) {
       throw e;
     }
 
-    const bucket = require('firebase-admin/storage').getStorage().bucket(
+    const bucket = getStorage().bucket(
       `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`
     );
 
