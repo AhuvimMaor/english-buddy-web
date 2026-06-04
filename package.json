@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest run --exclude \"**/*.integration.test.ts\"",
+    "test:watch": "vitest --exclude \"**/*.integration.test.ts\"",
+    "test:integration": "npx -y firebase-tools emulators:exec --only firestore,storage --project demo-english-buddy \"vitest run src/app/api/analyze\""
   },
   "dependencies": {
     "@anuradev/capacitor-audio-toggle": "^7.0.0",
@@ -28,6 +31,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.8"
   }
 }

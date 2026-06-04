@@ -7,6 +7,7 @@ import { db, storage } from '@/lib/firebase';
 import { doc, addDoc, collection, onSnapshot, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
 import { WebRTCCall } from '@/lib/webrtc';
+import { chunkObjectPath, chunkPrefix, extFromMime } from '@/lib/recording';
 import { Capacitor } from '@capacitor/core';
 import { AudioToggle } from '@anuradev/capacitor-audio-toggle';
 import { AudioSession } from '@capgo/capacitor-audio-session';
@@ -34,6 +35,38 @@ function CallContent() {
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const durationRef = useRef(0);
+
+  // Chunked recording upload: slices are uploaded during the call so long calls
+  // are resilient and the hang-up has no large upload to wait on.
+  const chunkUploadsRef = useRef<Promise<void>[]>([]);
+  const anyChunkUploadedRef = useRef(false);
+  const recordingMimeRef = useRef('audio/webm');
+
+  // Stop recording, wait for in-flight chunk uploads, and persist the recording
+  // metadata. Falls back to a single-file upload only if no chunk was uploaded
+  // (e.g. MediaRecorder unavailable), preserving the legacy behaviour.
+  const finalizeRecording = async (rtc: WebRTCCall, cid: string, uid: string) => {
+    const fallbackBlob = rtc.stopRecording(); // also flushes the final slice through onChunk
+    await Promise.allSettled(chunkUploadsRef.current);
+
+    if (anyChunkUploadedRef.current) {
+      await updateDoc(doc(db, 'calls', cid), {
+        [`recordingChunkPrefix_${uid}`]: chunkPrefix(cid, uid),
+        [`recordingChunkCount_${uid}`]: rtc.getChunkCount(),
+        [`recordingMime_${uid}`]: recordingMimeRef.current,
+      });
+      console.log('[Call] Chunked recording finalized:', rtc.getChunkCount(), 'chunks');
+      return;
+    }
+
+    if (fallbackBlob && fallbackBlob.size > 0) {
+      const ext = extFromMime(fallbackBlob.type);
+      const myPath = `recordings/${cid}/${uid}.${ext}`;
+      await uploadBytes(ref(storage, myPath), fallbackBlob);
+      await updateDoc(doc(db, 'calls', cid), { [`recording_${uid}`]: myPath });
+      console.log('[Call] Single-file recording uploaded (fallback):', myPath);
+    }
+  };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -141,19 +174,14 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const local = rtc.stopRecording();
-        if (callId && firebaseUser && wasConnected && local && local.size > 0) {
-          const ext = local.type?.includes('mp4') ? 'mp4' : 'webm';
-          const myPath = `recordings/${callId}/${firebaseUser.uid}.${ext}`;
+        if (callId && firebaseUser && wasConnected) {
           try {
-            await uploadBytes(ref(storage, myPath), local);
-            await updateDoc(doc(db, 'calls', callId), {
-              [`recording_${firebaseUser.uid}`]: myPath,
-            });
-            console.log('[Call] My recording uploaded:', myPath);
+            await finalizeRecording(rtc, callId, firebaseUser.uid);
           } catch (e: any) {
-            console.error('[Call] Upload failed:', e.message);
+            console.error('[Call] Upload failed:', e?.message || e);
           }
+        } else {
+          rtc.stopRecording();
         }
         await rtc.cleanup();
         webrtcRef.current = null;
@@ -210,6 +238,19 @@ function CallContent() {
       if (!mountedRef.current) return;
       if (state === 'connected' && !timerRef.current) {
         setStatus('connected');
+        chunkUploadsRef.current = [];
+        anyChunkUploadedRef.current = false;
+        rtc.onChunk = (blob, index, mime) => {
+          recordingMimeRef.current = mime;
+          // Use cid from this closure (not the callId state) to avoid the
+          // empty-string race before setCallId has flushed.
+          const path = chunkObjectPath(cid, firebaseUser.uid, index, extFromMime(mime));
+          chunkUploadsRef.current.push(
+            uploadBytes(ref(storage, path), blob)
+              .then(() => { anyChunkUploadedRef.current = true; })
+              .catch((e) => console.error('[Call] chunk upload failed', index, e?.message || e))
+          );
+        };
         rtc.startRecording();
         timerRef.current = setInterval(() => {
           durationRef.current += 1;
@@ -285,23 +326,14 @@ function CallContent() {
     try {
       const rtc = webrtcRef.current;
       if (rtc) {
-        const local = rtc.stopRecording();
-        console.log('[Call] Local blob:', local?.size || 0);
-
-        if (callId && firebaseUser && local && local.size > 0) {
+        if (callId && firebaseUser) {
           try {
-            const ext = local.type?.includes('mp4') ? 'mp4' : 'webm';
-            const myPath = `recordings/${callId}/${firebaseUser.uid}.${ext}`;
-            await uploadBytes(ref(storage, myPath), local);
-            console.log('[Call] My recording uploaded:', myPath);
-
-            // Store path under my UID key so both users' recordings coexist
-            await updateDoc(doc(db, 'calls', callId), {
-              [`recording_${firebaseUser.uid}`]: myPath,
-            });
+            await finalizeRecording(rtc, callId, firebaseUser.uid);
           } catch (uploadErr: any) {
-            console.error('[Call] Recording upload failed:', uploadErr.message);
+            console.error('[Call] Recording upload failed:', uploadErr?.message || uploadErr);
           }
+        } else {
+          rtc.stopRecording();
         }
         await rtc.cleanup();
         webrtcRef.current = null;

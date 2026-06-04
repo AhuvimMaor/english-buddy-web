@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI, { toFile } from 'openai';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import {
+  resolveRecording,
+  sortChunkFilesByIndex,
+  WHISPER_MAX_BYTES,
+  type ResolvedRecording,
+} from '@/lib/recording';
 
 export const maxDuration = 300; // Allow up to 5 minutes on Vercel
 
@@ -34,11 +40,11 @@ interface TranscriptSegment {
   text: string;
 }
 
-async function transcribeSegmentsWithOpenAI(bucket: any, path: string): Promise<TranscriptSegment[]> {
-  const file = bucket.file(path);
-  const [buffer] = await file.download();
+async function transcribeBuffer(buffer: Buffer, ext: string): Promise<TranscriptSegment[]> {
+  if (buffer.length > WHISPER_MAX_BYTES) {
+    throw new Error(`Recording exceeds Whisper ${WHISPER_MAX_BYTES} byte limit (${buffer.length})`);
+  }
 
-  const ext = path.split('.').pop() || 'webm';
   const audioFile = await toFile(buffer, `audio.${ext}`);
 
   const openai = getOpenAI();
@@ -55,6 +61,36 @@ async function transcribeSegmentsWithOpenAI(bucket: any, path: string): Promise<
     end: seg.end || 0,
     text: seg.text.trim()
   }));
+}
+
+// Download a single recording file.
+async function loadSingle(bucket: any, path: string): Promise<{ buffer: Buffer; ext: string }> {
+  const [buffer] = await bucket.file(path).download();
+  return { buffer, ext: path.split('.').pop() || 'webm' };
+}
+
+// Download all chunk slices for one speaker and concatenate them in order.
+// Listing (not the stored count) is authoritative, so a lost final slice on a
+// tab-close is tolerated. Concatenating ordered same-session slices is
+// byte-identical to the client's new Blob(localChunks).
+export async function loadChunked(bucket: any, prefix: string): Promise<{ buffer: Buffer; ext: string }> {
+  const [files] = await bucket.getFiles({ prefix: `${prefix}/` });
+  const ordered = sortChunkFilesByIndex(files.map((f: any) => f.name));
+  if (ordered.length === 0) {
+    throw new Error(`No chunk files found for ${prefix}`);
+  }
+  const buffers: Buffer[] = await Promise.all(
+    ordered.map((name) => bucket.file(name).download().then(([b]: [Buffer]) => b))
+  );
+  const ext = ordered[0].split('.').pop() || 'webm';
+  return { buffer: Buffer.concat(buffers), ext };
+}
+
+// Load a speaker's audio buffer regardless of storage layout (chunked or single).
+async function loadRecording(bucket: any, res: ResolvedRecording): Promise<{ buffer: Buffer; ext: string }> {
+  if (res.kind === 'chunked') return loadChunked(bucket, res.prefix);
+  if (res.kind === 'single') return loadSingle(bucket, res.path);
+  throw new Error('No recording to load');
 }
 
 const SYSTEM_PROMPT = `You are an English language tutor for Hebrew speakers. You will receive a transcription of a conversation with speaker labels (Speaker 1, Speaker 2, etc).
@@ -123,17 +159,19 @@ export async function POST(req: NextRequest) {
     const callerId = callData.callerId;
     const calleeId = callData.calleeId;
 
-    // Find recordings
-    const callerRecording = callData[`recording_${callerId}`] || callData.recordingPath || null;
-    const calleeRecording = callData[`recording_${calleeId}`] || callData.partnerRecordingPath || null;
+    // Resolve recordings (chunked -> per-speaker single -> legacy fallback).
+    const callerRes = resolveRecording(callData, callerId, callData.recordingPath);
+    const calleeRes = resolveRecording(callData, calleeId, callData.partnerRecordingPath);
+    const callerPresent = callerRes.kind !== 'none';
+    const calleePresent = calleeRes.kind !== 'none';
 
     const force = req.nextUrl?.searchParams?.get('force') === 'true' || body.force === true;
 
-    if (!callerRecording && !calleeRecording) {
+    if (!callerPresent && !calleePresent) {
       return NextResponse.json({ error: 'No recording found yet' }, { status: 400 });
     }
 
-    if ((!callerRecording || !calleeRecording) && !force) {
+    if ((!callerPresent || !calleePresent) && !force) {
       // One is missing, wait for the other to upload before starting analysis
       return NextResponse.json({ success: true, message: 'Waiting for partner recording' }, { status: 200 });
     }
@@ -169,13 +207,18 @@ export async function POST(req: NextRequest) {
 
     let transcription: string;
 
+    const transcribeSpeaker = async (res: ResolvedRecording): Promise<TranscriptSegment[]> => {
+      const { buffer, ext } = await loadRecording(bucket, res);
+      return transcribeBuffer(buffer, ext);
+    };
+
     try {
-      if (callerRecording && calleeRecording) {
+      if (callerPresent && calleePresent) {
         // BEST: Per-speaker recordings - each person's clean mic audio
         // Parallelize transcription
         const [callerSegments, calleeSegments] = await Promise.all([
-          transcribeSegmentsWithOpenAI(bucket, callerRecording),
-          transcribeSegmentsWithOpenAI(bucket, calleeRecording)
+          transcribeSpeaker(callerRes),
+          transcribeSpeaker(calleeRes)
         ]);
 
         // Combine and sort chronologically by start time
@@ -183,13 +226,13 @@ export async function POST(req: NextRequest) {
           ...callerSegments.map(seg => ({ ...seg, speaker: callerName })),
           ...calleeSegments.map(seg => ({ ...seg, speaker: calleeName }))
         ];
-        
+
         combinedSegments.sort((a, b) => a.start - b.start);
         transcription = combinedSegments.map(seg => `[${seg.speaker}]: ${seg.text}`).join('\n');
       } else {
         // Fallback: single recording
-        const recording = callerRecording || calleeRecording;
-        const segments = await transcribeSegmentsWithOpenAI(bucket, recording!);
+        const present = callerPresent ? callerRes : calleeRes;
+        const segments = await transcribeSpeaker(present);
         transcription = segments.map(seg => seg.text).join('\n');
       }
     } catch (e: any) {
