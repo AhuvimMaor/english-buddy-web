@@ -160,8 +160,12 @@ export async function POST(req: NextRequest) {
     );
 
     // Get user names for labeling
-    const callerNameForLabel = (await db.collection('users').doc(callerId).get()).data()?.displayName || 'Caller';
-    const calleeNameForLabel = (await db.collection('users').doc(calleeId).get()).data()?.displayName || 'Callee';
+    const [callerUserDoc, calleeUserDoc] = await Promise.all([
+      db.collection('users').doc(callerId).get(),
+      db.collection('users').doc(calleeId).get(),
+    ]);
+    const callerName = callerUserDoc.data()?.displayName || 'Caller';
+    const calleeName = calleeUserDoc.data()?.displayName || 'Callee';
 
     let transcription: string;
 
@@ -176,8 +180,8 @@ export async function POST(req: NextRequest) {
 
         // Combine and sort chronologically by start time
         const combinedSegments = [
-          ...callerSegments.map(seg => ({ ...seg, speaker: callerNameForLabel })),
-          ...calleeSegments.map(seg => ({ ...seg, speaker: calleeNameForLabel }))
+          ...callerSegments.map(seg => ({ ...seg, speaker: callerName })),
+          ...calleeSegments.map(seg => ({ ...seg, speaker: calleeName }))
         ];
         
         combinedSegments.sort((a, b) => a.start - b.start);
@@ -194,11 +198,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Transcription failed: ' + e.message }, { status: 500 });
     }
 
-    await callRef.update({ transcription });
-    await callRef.update({ analysisStatus: 'analyzing' });
-
-    const callerName = (await db.collection('users').doc(callerId).get()).data()?.displayName || 'User';
-    const calleeName = (await db.collection('users').doc(calleeId).get()).data()?.displayName || 'Partner';
+    await callRef.update({ transcription, analysisStatus: 'analyzing' });
 
     // Analyze each speaker separately
     const participants = [
@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
     ];
 
     // Parallelize LLM analysis and report creation
-    await Promise.all(participants.map(async (participant) => {
+    const analysisResults = await Promise.all(participants.map(async (participant) => {
       try {
         const completion = await getOpenAI().chat.completions.create({
           model: 'gpt-4o',
@@ -236,10 +236,17 @@ export async function POST(req: NextRequest) {
           tips: analysis.tips || [],
           createdAt: new Date(),
         });
+        return true;
       } catch (err) {
         console.error(`Failed analysis for ${participant.name}:`, err);
+        return false;
       }
     }));
+
+    if (!analysisResults.some(Boolean)) {
+      await callRef.update({ analysisStatus: 'failed' });
+      return NextResponse.json({ error: 'All analyses failed' }, { status: 500 });
+    }
 
     // Update call stats
     const durationMinutes = (callData.durationSeconds || 0) / 60;
