@@ -156,12 +156,19 @@ export async function POST(req: NextRequest) {
     }
 
     const callData = callDoc.data()!;
-    
-    // Prevent double execution
-    if (callData.analysisStatus === 'transcribing' || callData.analysisStatus === 'analyzing' || callData.analysisStatus === 'complete') {
+
+    const force = req.nextUrl?.searchParams?.get('force') === 'true' || body.force === true;
+    // Re-run analysis for an already-completed call and replace its reports
+    // (e.g. after a transcription fix). Implies force.
+    const reprocess = req.nextUrl?.searchParams?.get('reprocess') === 'true' || body.reprocess === true;
+
+    // Prevent double execution. A reprocess is allowed to re-run a 'complete'
+    // (or 'failed') call, but never one that is genuinely in flight.
+    const inFlight = callData.analysisStatus === 'transcribing' || callData.analysisStatus === 'analyzing';
+    if (inFlight || (callData.analysisStatus === 'complete' && !reprocess)) {
       return NextResponse.json({ success: true, message: 'Already processing' }, { status: 200 });
     }
-    
+
     const callerId = callData.callerId;
     const calleeId = callData.calleeId;
 
@@ -171,13 +178,11 @@ export async function POST(req: NextRequest) {
     const callerPresent = callerRes.kind !== 'none';
     const calleePresent = calleeRes.kind !== 'none';
 
-    const force = req.nextUrl?.searchParams?.get('force') === 'true' || body.force === true;
-
     if (!callerPresent && !calleePresent) {
       return NextResponse.json({ error: 'No recording found yet' }, { status: 400 });
     }
 
-    if ((!callerPresent || !calleePresent) && !force) {
+    if ((!callerPresent || !calleePresent) && !force && !reprocess) {
       // One is missing, wait for the other to upload before starting analysis
       return NextResponse.json({ success: true, message: 'Waiting for partner recording' }, { status: 200 });
     }
@@ -187,7 +192,8 @@ export async function POST(req: NextRequest) {
       await db.runTransaction(async (t) => {
         const doc = await t.get(callRef);
         const data = doc.data()!;
-        if (data.analysisStatus === 'transcribing' || data.analysisStatus === 'analyzing' || data.analysisStatus === 'complete') {
+        const dInFlight = data.analysisStatus === 'transcribing' || data.analysisStatus === 'analyzing';
+        if (dInFlight || (data.analysisStatus === 'complete' && !reprocess)) {
           throw new Error('ALREADY_PROCESSING');
         }
         t.update(callRef, { analysisStatus: 'transcribing' });
@@ -249,6 +255,13 @@ export async function POST(req: NextRequest) {
 
     await callRef.update({ transcription, analysisStatus: 'analyzing' });
 
+    // On reprocess, remove the stale reports now (after a successful
+    // transcription) so we replace rather than duplicate them.
+    if (reprocess) {
+      const stale = await db.collection('reports').where('callId', '==', callId).get();
+      await Promise.all(stale.docs.map((d: any) => d.ref.delete()));
+    }
+
     // Analyze each speaker separately
     const participants = [
       { userId: callerId, partnerId: calleeId, name: callerName, role: 'caller' },
@@ -297,18 +310,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'All analyses failed' }, { status: 500 });
     }
 
-    // Update call stats
-    const durationMinutes = (callData.durationSeconds || 0) / 60;
-    await Promise.all([callerId, calleeId].map(async (uid) => {
-      try {
-        await db.collection('users').doc(uid).update({
-          callCount: FieldValue.increment(1),
-          totalCallMinutes: FieldValue.increment(durationMinutes),
-        });
-      } catch (e) {
-        console.error(`Failed to update stats for ${uid}:`, e);
-      }
-    }));
+    // Update call stats (skip on reprocess so we don't double-count an
+    // already-counted call).
+    if (!reprocess) {
+      const durationMinutes = (callData.durationSeconds || 0) / 60;
+      await Promise.all([callerId, calleeId].map(async (uid) => {
+        try {
+          await db.collection('users').doc(uid).update({
+            callCount: FieldValue.increment(1),
+            totalCallMinutes: FieldValue.increment(durationMinutes),
+          });
+        } catch (e) {
+          console.error(`Failed to update stats for ${uid}:`, e);
+        }
+      }));
+    }
 
     await callRef.update({ analysisStatus: 'complete' });
     return NextResponse.json({ success: true });

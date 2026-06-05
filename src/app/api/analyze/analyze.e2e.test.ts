@@ -51,6 +51,20 @@ const h = vi.hoisted(() => {
         (data[name] ??= {})[id] = { ...obj };
         return { id };
       },
+      where(field: string, _op: string, value: any) {
+        return {
+          async get() {
+            const entries = Object.entries(data[name] ?? {}).filter(([, v]: any) => v[field] === value);
+            return {
+              docs: entries.map(([docId, v]: any) => ({
+                id: docId,
+                data: () => ({ ...v }),
+                ref: { delete: async () => { delete data[name][docId]; } },
+              })),
+            };
+          },
+        };
+      },
     }),
     async runTransaction(fn: (t: any) => Promise<any>) {
       const t = {
@@ -145,9 +159,9 @@ import { POST } from './route';
 import { chunkObjectPath, chunkPrefix } from '@/lib/recording';
 import { sliceBuffer, makeFakeAudio } from './__fixtures__/audioFixtures';
 
-function makeReq(callId: string, force = false) {
+function makeReq(callId: string, force = false, reprocess = false) {
   return {
-    json: async () => ({ callId, force }),
+    json: async () => ({ callId, force, reprocess }),
     nextUrl: { searchParams: { get: () => null } },
   } as any;
 }
@@ -247,5 +261,47 @@ describe('analyze pipeline e2e (recorded conversation, mocked OpenAI)', () => {
     h.db.__seed('calls', callId, { callerId: 'x', calleeId: 'y', analysisStatus: 'pending' });
     const res = await POST(makeReq(callId, true));
     expect(res.status).toBe(400);
+  });
+
+  it('skips a completed call but reprocesses it on demand (replacing reports)', async () => {
+    const callId = 'call-done';
+    const callerId = 'userE';
+    const calleeId = 'userF';
+    sliceBuffer(makeFakeAudio('e'), 2).forEach((b, i) =>
+      h.bucket.__put(chunkObjectPath(callId, callerId, i, 'webm'), b)
+    );
+    sliceBuffer(makeFakeAudio('f'), 2).forEach((b, i) =>
+      h.bucket.__put(chunkObjectPath(callId, calleeId, i, 'webm'), b)
+    );
+    h.db.__seed('calls', callId, {
+      callerId,
+      calleeId,
+      durationSeconds: 100,
+      analysisStatus: 'complete', // already done
+      [`recordingChunkPrefix_${callerId}`]: chunkPrefix(callId, callerId),
+      [`recordingChunkPrefix_${calleeId}`]: chunkPrefix(callId, calleeId),
+    });
+    h.db.__seed('users', callerId, { displayName: 'Eve', callCount: 1, totalCallMinutes: 5 });
+    h.db.__seed('users', calleeId, { displayName: 'Frank', callCount: 1, totalCallMinutes: 5 });
+    // A stale report already exists from the first run.
+    h.db.__seed('reports', 'stale1', { callId, userId: callerId, fluencyScore: 2, summary: 'stale' });
+
+    // Without reprocess: no-op (already complete).
+    const skipped = await POST(makeReq(callId));
+    expect(skipped.status).toBe(200);
+    expect(h.db.__all('reports').length).toBe(1); // unchanged
+
+    // With reprocess: stale report removed, two fresh reports written.
+    const res = await POST(makeReq(callId, false, true));
+    expect(res.status).toBe(200);
+    const reports = h.db.__all('reports') as any[];
+    expect(reports.length).toBe(2);
+    expect(reports.find((r) => r.summary === 'stale')).toBeUndefined();
+    expect(reports.every((r) => r.fluencyScore === 6)).toBe(true);
+
+    // Stats must NOT double-count on reprocess.
+    const eve = (await h.db.collection('users').doc(callerId).get()).data();
+    expect(eve.callCount).toBe(1);
+    expect(eve.totalCallMinutes).toBe(5);
   });
 });
