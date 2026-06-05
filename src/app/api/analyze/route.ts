@@ -54,6 +54,11 @@ async function transcribeBuffer(buffer: Buffer, ext: string): Promise<Transcript
     model: 'whisper-1',
     response_format: 'verbose_json',
     timestamp_granularities: ['segment'],
+    // Force English. This is an English-learning app: without it Whisper
+    // auto-detects one language per track, picks Hebrew on accented/mixed
+    // speech, and drops most of the spoken English. Hebrew words spoken inside
+    // English are still captured inline; the tutor prompt converts them.
+    language: 'en',
     prompt: 'This is an English conversation that might contain mixed Hebrew words like shalom, beseder, sababa, etc.',
   }) as any;
 
