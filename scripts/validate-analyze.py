@@ -142,10 +142,21 @@ def main():
               f"tips={len(a.get('tips',[]))}")
         if not isinstance(fs, (int, float)) or not (1 <= fs <= 10):
             die(f"{sp['name']}: fluencyScore missing/out of range ({fs}).")
-        if len(a.get("transcript", [])) == 0:
+        tr = a.get("transcript", [])
+        if len(tr) == 0:
             die(f"{sp['name']}: empty transcript in report.")
         if len(a.get("tips", [])) == 0:
             die(f"{sp['name']}: no tips in report.")
+        # Chronological-order regression: a transcript grouped by speaker (all of
+        # one speaker, then the other) has ~1 transition. A real back-and-forth
+        # conversation alternates many times. Guards commit 05ee7c4.
+        sp_seq = [e.get("speaker") for e in tr if e.get("speaker")]
+        transitions = sum(1 for i in range(1, len(sp_seq)) if sp_seq[i] != sp_seq[i - 1])
+        print(f"  speaker transitions: {transitions} across {len(tr)} entries")
+        if len(tr) >= 4 and transitions < 3:
+            die(f"{sp['name']}: transcript looks GROUPED by speaker "
+                f"({transitions} transitions across {len(tr)} entries) — the report "
+                f"must preserve the chronological alternating conversation order.")
 
     # 3) Across the call there must be at least one grammar correction AND one
     #    Hebrew word detected (the maya track has both).
@@ -160,7 +171,7 @@ def main():
 
     print(f"\n✅ PASS — English captured ({latin} latin chars), Hebrew preserved, "
           f"{total_grammar} grammar correction(s), {len(hebrew_words)} Hebrew word(s), "
-          f"fluency + tips present on both speakers.")
+          f"chronological order kept, fluency + tips present on both speakers.")
 
 
 if __name__ == "__main__":
