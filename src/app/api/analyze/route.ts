@@ -112,8 +112,9 @@ IMPORTANT RULES:
 Produce a JSON report with:
 
 1. transcript: array of {speaker: "user"|"partner", text: string, corrections: array|null}
-   - IMPORTANT: Break each speaker's text into INDIVIDUAL SENTENCES. Each sentence = separate entry.
-   - Alternate between speakers to recreate natural conversation flow
+   - CRITICAL: DO NOT GROUP BY SPEAKER. You MUST maintain the EXACT chronological, alternating order of the original conversation.
+   - Break each speaker's text into INDIVIDUAL SENTENCES. Each sentence = separate entry.
+   - Alternate between speakers exactly as they spoke to recreate the natural back-and-forth conversation flow.
    - Map the learner to "user" and helper to "partner"
    - IMPORTANT: When user mixes Hebrew words within English, keep them INLINE using Hebrew letters
    - "corrections" is an array of {wrong: string, right: string, explanation: string} - ONLY the specific wrong word/phrase
@@ -278,7 +279,7 @@ export async function POST(req: NextRequest) {
             { role: 'system', content: SYSTEM_PROMPT },
             {
               role: 'user',
-              content: `Analyze this conversation for "${participant.name}" (the ${participant.role}). Find THEIR grammar mistakes, Hebrew words, and score THEIR fluency. Show the full conversation but corrections only for their lines.\n\n${transcription}`,
+              content: `Analyze this conversation for "${participant.name}" (the ${participant.role}). Find THEIR grammar mistakes, Hebrew words, and score THEIR fluency. Show the FULL, EXACT conversation in its original alternating chronological order (do NOT group lines by speaker). Add corrections only for their lines.\n\n${transcription}`,
             },
           ],
         });
