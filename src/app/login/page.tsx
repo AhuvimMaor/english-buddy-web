@@ -35,7 +35,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-[var(--accent-coral)] to-[var(--accent-amber)] shadow-lg mb-4">
             <span className="text-3xl">🗣️</span>
           </div>
-          <h1 className="text-2xl font-bold text-[var(--text-primary)]">Welcome back</h1>
+          <h1 className="text-2xl font-bold text-red-500">Welcome back</h1>
           <p className="text-sm text-[var(--text-muted)] mt-1">Continue your English journey</p>
         </div>
 

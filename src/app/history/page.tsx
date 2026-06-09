@@ -104,7 +104,7 @@ export default function HistoryPage() {
     <div className="min-h-screen bg-warm-gradient bg-dots pb-20">
       <NavBar />
       <main className="px-5 pt-12">
-        <h1 className="text-2xl font-bold text-[var(--text-primary)] mb-6 animate-fade-in-up">Your Reports</h1>
+        <h1 className="text-2xl font-bold text-red-500 mb-6 animate-fade-in-up">Your Reports</h1>
 
         {loading ? (
           <div className="flex justify-center py-16">

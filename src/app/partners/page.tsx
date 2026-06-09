@@ -109,7 +109,7 @@ export default function PartnersPage() {
       <header className="px-5 pt-12 pb-6">
         <div className="animate-fade-in-up">
           <p className="text-sm text-[var(--text-muted)] font-medium">Hey {profile?.displayName?.split(' ')[0] || 'there'} 👋</p>
-          <h1 className="text-2xl font-bold text-black mt-1">Find a practice partner</h1>
+          <h1 className="text-2xl font-bold text-red-500 mt-1">Find a practice partner</h1>
         </div>
 
         {/* Stats strip */}
