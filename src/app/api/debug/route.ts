@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 
-function getAdminDb() {
+function getAdminApp() {
   if (getApps().length === 0) {
     const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
     if (serviceAccount) {
@@ -10,20 +11,53 @@ function getAdminDb() {
         ? serviceAccount
         : Buffer.from(serviceAccount, 'base64').toString('utf-8');
       const parsed = JSON.parse(decoded);
-      initializeApp({ credential: cert(parsed) });
+      return initializeApp({ credential: cert(parsed), storageBucket: "english-buddy-431f9.firebasestorage.app" });
     } else if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
       process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8180';
-      initializeApp({ projectId: 'demo-english-buddy' });
+      return initializeApp({ projectId: 'demo-english-buddy', storageBucket: "demo-english-buddy.firebasestorage.app" });
     } else {
-      initializeApp({ projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '' });
+      return initializeApp({ projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '', storageBucket: "english-buddy-431f9.firebasestorage.app" });
     }
   }
-  return getFirestore();
+  return getApps()[0];
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const db = getAdminDb();
+    const app = getAdminApp();
+    const db = getFirestore(app);
+    const prefix = req.nextUrl.searchParams.get('prefix');
+
+    if (prefix) {
+      const bucket = getStorage(app).bucket();
+      const [files] = await bucket.getFiles({ prefix: `${prefix}/` });
+      
+      const sortedFiles = files
+        .map(f => {
+          const match = f.name.match(/chunk-(\d+)\.[a-z0-9]+$/i);
+          return { file: f, index: match ? parseInt(match[1], 10) : -1 };
+        })
+        .filter(f => f.index !== -1)
+        .sort((a, b) => a.index - b.index);
+
+      if (sortedFiles.length === 0) {
+        return NextResponse.json({ error: `No chunks found for ${prefix}` }, { status: 404 });
+      }
+
+      const chunks = [];
+      for (const { file } of sortedFiles) {
+        const [buffer] = await file.download();
+        chunks.push(buffer);
+      }
+
+      const fullBuffer = Buffer.concat(chunks);
+      return new NextResponse(fullBuffer, {
+        headers: {
+          'Content-Type': 'audio/webm',
+          'Content-Disposition': `attachment; filename="${prefix.split('/').join('_')}.webm"`,
+        },
+      });
+    }
 
     const usersSnap = await db.collection('users').get();
     const users = usersSnap.docs.map(d => ({
