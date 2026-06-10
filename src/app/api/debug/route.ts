@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps } from 'firebase-admin/app';
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 function getAdminDb() {
   if (getApps().length === 0) {
-    if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
+    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    if (serviceAccount) {
+      const decoded = serviceAccount.startsWith('{')
+        ? serviceAccount
+        : Buffer.from(serviceAccount, 'base64').toString('utf-8');
+      const parsed = JSON.parse(decoded);
+      initializeApp({ credential: cert(parsed) });
+    } else if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
       process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8180';
       initializeApp({ projectId: 'demo-english-buddy' });
     } else {
