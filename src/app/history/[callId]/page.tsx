@@ -7,6 +7,7 @@ import { collection, query, where, limit, onSnapshot } from 'firebase/firestore'
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Report, TranscriptLine } from '@/types';
+import { tokenizeCaption } from '@/lib/hebrew';
 
 function ScoreRing({ score }: { score: number | null }) {
   const s = score || 0;
@@ -67,7 +68,15 @@ function TranscriptView({ transcript }: { transcript: TranscriptLine[] }) {
                     ? 'bg-[var(--accent-blue)] text-white rounded-br-md'
                     : 'bg-white border border-gray-100 shadow-[var(--shadow-sm)] text-[var(--text-primary)] rounded-bl-md'
                 }`}>
-                  <p className="text-[14px] leading-relaxed">{line.text}</p>
+                  <p className="text-[14px] leading-relaxed">
+                    {tokenizeCaption(line.text).map((t, k) =>
+                      t.hebrew ? (
+                        <span key={k} dir="rtl" className={`rounded px-1 font-semibold ${isUser ? 'bg-white/25' : 'bg-amber-100 text-amber-800'}`}>{t.text}</span>
+                      ) : (
+                        <span key={k}>{t.text}</span>
+                      )
+                    )}
+                  </p>
                 </div>
 
                 {/* Corrections - only show on YOUR messages */}
@@ -195,21 +204,33 @@ export default function ReportPage() {
           </div>
         )}
 
-        {/* Hebrew words */}
+        {/* Hebrew words: study table */}
         {report.hebrewWords?.length > 0 && (
           <div className="mb-6 animate-fade-in-up stagger-5">
             <h2 className="text-base font-bold text-[var(--text-primary)] mb-3 flex items-center gap-2">
               <span className="w-7 h-7 rounded-lg bg-[var(--accent-purple-light)] flex items-center justify-center text-sm">🇮🇱</span>
               Words to Learn ({report.hebrewWords.length})
             </h2>
-            <div className="grid grid-cols-1 gap-2">
-              {report.hebrewWords.map((w, i) => (
-                <div key={i} className="bg-white rounded-[var(--radius-sm)] shadow-[var(--shadow-sm)] p-4 flex items-center gap-3">
-                  <span className="text-lg font-bold text-[var(--text-primary)]">{w.hebrew}</span>
-                  <span className="text-[var(--text-muted)]">→</span>
-                  <span className="text-sm font-semibold text-[var(--accent-blue)]">{w.english}</span>
-                </div>
-              ))}
+            <div className="bg-white rounded-[var(--radius-sm)] shadow-[var(--shadow-sm)] overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <caption className="sr-only">Hebrew words you used, with their English translation</caption>
+                <thead>
+                  <tr className="border-b border-gray-100 text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
+                    <th scope="col" className="px-4 py-3 font-bold">Hebrew</th>
+                    <th scope="col" className="px-4 py-3 font-bold">English</th>
+                    <th scope="col" className="px-4 py-3 font-bold">You said</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.hebrewWords.map((w, i) => (
+                    <tr key={i} className="border-b border-gray-50 last:border-0 align-top">
+                      <td dir="rtl" className="px-4 py-3 text-lg font-bold text-[var(--text-primary)] whitespace-nowrap">{w.hebrew}</td>
+                      <td className="px-4 py-3 font-semibold text-[var(--accent-blue)]">{w.english}</td>
+                      <td dir="auto" className="px-4 py-3 text-xs text-[var(--text-muted)]">{w.context}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}

@@ -4,6 +4,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb, getAdminBucket } from '@/lib/server/admin';
 import { authenticate, isParticipant } from '@/lib/server/auth';
 import { rateLimit } from '@/lib/server/rateLimit';
+import { mergeHebrewWords } from '@/lib/vocabulary';
 import {
   resolveRecording,
   sortChunkFilesByIndex,
@@ -108,8 +109,10 @@ Produce a JSON report with:
    - Must comprehensively capture all ENGLISH grammar mistakes, syntax errors, and awkward phrasings from the learner. DO NOT limit this to just translated Hebrew words.
 
 3. hebrewWords: array of {hebrew, english, context}
-   - "hebrew" MUST be in Hebrew letters (תודה not "toda")
-   - Convert transliterated Hebrew to Hebrew script
+   - List EVERY Hebrew word or phrase the learner said, once each. This becomes the learner's study table, so do not skip any.
+   - "hebrew" MUST be in Hebrew letters (תודה not "toda"). Convert transliterated Hebrew to Hebrew script.
+   - "english" is the natural English translation the learner should have said
+   - "context" is the learner's full sentence where the word was used
 
 4. fluencyScore: number 1-10
    - CRITICAL: If the learner speaks ONLY or predominantly Hebrew, the fluency score MUST be very low (1, 2, or 3 max) regardless of how fluent their Hebrew is.
@@ -292,7 +295,7 @@ export async function POST(req: NextRequest) {
           callDuration: callData.durationSeconds || 0,
           transcript: analysis.transcript || [],
           grammarMistakes: analysis.grammarMistakes || [],
-          hebrewWords: analysis.hebrewWords || [],
+          hebrewWords: mergeHebrewWords(analysis),
           fluencyScore: analysis.fluencyScore || null,
           summary: analysis.summary || '',
           tips: analysis.tips || [],
