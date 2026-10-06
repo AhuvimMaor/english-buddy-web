@@ -3,12 +3,15 @@
 import { useAuthContext } from '@/components/AuthProvider';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState, useCallback, Suspense } from 'react';
-import { db, storage } from '@/lib/firebase';
+import { db, storage, auth } from '@/lib/firebase';
 import { doc, addDoc, collection, onSnapshot, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
 import { WebRTCCall } from '@/lib/webrtc';
 import { chunkObjectPath, chunkPrefix, extFromMime } from '@/lib/recording';
 import { withRetry } from '@/lib/retry';
+import { LiveCaptioner } from '@/lib/liveCaptions';
+import { useCaptions } from '@/hooks/useCaptions';
+import { LiveCaptions } from '@/components/LiveCaptions';
 import { Capacitor } from '@capacitor/core';
 import { AudioToggle } from '@anuradev/capacitor-audio-toggle';
 import { AudioSession } from '@capgo/capacitor-audio-session';
@@ -26,6 +29,8 @@ function CallContent() {
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(true);
+  const [captionsOn, setCaptionsOn] = useState(true);
+  const captionerRef = useRef<LiveCaptioner | null>(null);
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
   const [callId, setCallId] = useState(callIdParam || '');
   // Mirror of callId for callbacks created before setCallId has flushed (the
@@ -51,6 +56,8 @@ function CallContent() {
   // metadata. Falls back to a single-file upload only if no chunk was uploaded
   // (e.g. MediaRecorder unavailable), preserving the legacy behaviour.
   const finalizeRecording = async (rtc: WebRTCCall, cid: string, uid: string) => {
+    captionerRef.current?.stop();
+    captionerRef.current = null;
     const fallbackBlob = await rtc.stopRecording(); // resolves after the final slice went through onChunk
     await Promise.allSettled(chunkUploadsRef.current);
 
@@ -147,6 +154,7 @@ function CallContent() {
       resetStatus();
       if (timerRef.current) clearInterval(timerRef.current);
       if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
+      captionerRef.current?.stop();
       webrtcRef.current?.cleanup();
     };
   }, [firebaseUser]);
@@ -265,6 +273,19 @@ function CallContent() {
           );
         };
         rtc.startRecording();
+        const micStream = rtc.getRecordingStream();
+        if (micStream && !captionerRef.current && LiveCaptioner.isSupported()) {
+          captionerRef.current = new LiveCaptioner({
+            stream: micStream,
+            callId: cid,
+            getToken: async () => {
+              const user = auth.currentUser;
+              if (!user) throw new Error('not signed in');
+              return user.getIdToken();
+            },
+          });
+          captionerRef.current.start();
+        }
         timerRef.current = setInterval(() => {
           durationRef.current += 1;
           if (mountedRef.current) setDuration(d => d + 1);
@@ -378,6 +399,8 @@ function CallContent() {
     }
   };
 
+  const captions = useCaptions(callId, captionsOn && status === 'connected');
+
   const handleMute = () => {
     const isMuted = webrtcRef.current?.toggleMute() ?? false;
     setMuted(isMuted);
@@ -452,7 +475,11 @@ function CallContent() {
         )}
       </div>
 
-      <div className="flex items-center gap-8 pb-12">
+      {status === 'connected' && captionsOn && (
+        <LiveCaptions captions={captions} myUid={firebaseUser?.uid || ''} partnerName={partnerName} />
+      )}
+
+      <div className="flex items-center gap-3 sm:gap-8 pb-12">
         <button
           onClick={handleMute}
           className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition active:scale-90 ${
@@ -460,6 +487,17 @@ function CallContent() {
           }`}
         >
           {muted ? '🔇' : '🎤'}
+        </button>
+
+        <button
+          onClick={() => setCaptionsOn(v => !v)}
+          aria-pressed={captionsOn}
+          aria-label="Toggle live captions"
+          className={`w-16 h-16 rounded-full flex items-center justify-center text-sm font-bold transition active:scale-90 ${
+            captionsOn ? 'bg-white/20' : 'bg-white/10 hover:bg-white/15'
+          }`}
+        >
+          CC
         </button>
 
         <button
