@@ -302,7 +302,7 @@ describe('analyze pipeline e2e (recorded conversation, mocked OpenAI)', () => {
     h.db.__seed('reports', 'stale1', { callId, userId: callerId, fluencyScore: 2, summary: 'stale' });
 
     // Without reprocess: no-op (already complete).
-    const skipped = await POST(makeReq(callId));
+    const skipped = await POST(makeReq(callId, false, false, callerId));
     expect(skipped.status).toBe(200);
     expect(h.db.__all('reports').length).toBe(1); // unchanged
 
