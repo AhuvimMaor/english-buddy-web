@@ -85,7 +85,9 @@ export class WebRTCCall {
 
     this.pc.onconnectionstatechange = () => {
       console.log('[WebRTC] Connection state:', this.pc.connectionState);
-      if (this.pc.connectionState === 'connected' && !notifiedConnected) {
+      if (this.pc.connectionState === 'connected') {
+        // Also fires after a transient 'disconnected' recovers, so the caller
+        // can cancel its hang-up grace timer.
         notifiedConnected = true;
         this.onConnectionState?.('connected');
       } else if (this.pc.connectionState === 'disconnected' || this.pc.connectionState === 'failed') {
@@ -246,18 +248,45 @@ export class WebRTCCall {
     return this.localRecorder?.mimeType || 'audio/webm';
   }
 
-  stopRecording(): Blob | null {
-    if (this.localRecorder && this.localRecorder.state !== 'inactive') {
-      this.localRecorder.stop();
-    }
-
-    if (this.localChunks.length > 0) {
-      const mime = this.localRecorder?.mimeType || 'audio/webm';
+  // Stops the recorder and resolves once the final slice has been flushed
+  // through onChunk. MediaRecorder.stop() fires its last dataavailable event
+  // asynchronously, so callers MUST await this before waiting on uploads or
+  // reading getChunkCount(), otherwise the last slice is lost.
+  stopRecording(): Promise<Blob | null> {
+    const recorder = this.localRecorder;
+    const buildBlob = (): Blob | null => {
+      if (this.localChunks.length === 0) return null;
+      const mime = recorder?.mimeType || 'audio/webm';
       const blob = new Blob(this.localChunks, { type: mime });
       console.log('[WebRTC] Recording:', blob.size, 'bytes');
       return blob;
+    };
+
+    if (!recorder || recorder.state === 'inactive') {
+      return Promise.resolve(buildBlob());
     }
-    return null;
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve(buildBlob());
+      };
+      recorder.addEventListener('stop', finish, { once: true });
+      // Safety net so a hang-up can never block forever on a broken recorder.
+      setTimeout(finish, 3000);
+      try {
+        recorder.stop();
+      } catch {
+        finish();
+      }
+    });
+  }
+
+  // The cloned mic stream used for recording; shared with live captions.
+  getRecordingStream(): MediaStream | null {
+    return this.recordingStream || this.localStream;
   }
 
   toggleMute(): boolean {

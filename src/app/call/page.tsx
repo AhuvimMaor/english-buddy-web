@@ -8,6 +8,7 @@ import { doc, addDoc, collection, onSnapshot, updateDoc, serverTimestamp, getDoc
 import { ref, uploadBytes } from 'firebase/storage';
 import { WebRTCCall } from '@/lib/webrtc';
 import { chunkObjectPath, chunkPrefix, extFromMime } from '@/lib/recording';
+import { withRetry } from '@/lib/retry';
 import { Capacitor } from '@capacitor/core';
 import { AudioToggle } from '@anuradev/capacitor-audio-toggle';
 import { AudioSession } from '@capgo/capacitor-audio-session';
@@ -27,6 +28,10 @@ function CallContent() {
   const [speakerOn, setSpeakerOn] = useState(true);
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
   const [callId, setCallId] = useState(callIdParam || '');
+  // Mirror of callId for callbacks created before setCallId has flushed (the
+  // WebRTC state handlers close over the first render's empty callId).
+  const callIdRef = useRef(callIdParam || '');
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [error, setError] = useState('');
   const endingRef = useRef(false);
   const mountedRef = useRef(true);
@@ -46,7 +51,7 @@ function CallContent() {
   // metadata. Falls back to a single-file upload only if no chunk was uploaded
   // (e.g. MediaRecorder unavailable), preserving the legacy behaviour.
   const finalizeRecording = async (rtc: WebRTCCall, cid: string, uid: string) => {
-    const fallbackBlob = rtc.stopRecording(); // also flushes the final slice through onChunk
+    const fallbackBlob = await rtc.stopRecording(); // resolves after the final slice went through onChunk
     await Promise.allSettled(chunkUploadsRef.current);
 
     if (anyChunkUploadedRef.current) {
@@ -141,6 +146,7 @@ function CallContent() {
       window.removeEventListener('beforeunload', resetStatus);
       resetStatus();
       if (timerRef.current) clearInterval(timerRef.current);
+      if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
       webrtcRef.current?.cleanup();
     };
   }, [firebaseUser]);
@@ -167,6 +173,7 @@ function CallContent() {
   const handleRemoteHangup = async () => {
     if (endingRef.current) return;
     endingRef.current = true;
+    const callId = callIdRef.current;
     const wasConnected = durationRef.current > 0;
     if (mountedRef.current) setStatus('ended');
     if (timerRef.current) clearInterval(timerRef.current);
@@ -181,7 +188,7 @@ function CallContent() {
             console.error('[Call] Upload failed:', e?.message || e);
           }
         } else {
-          rtc.stopRecording();
+          await rtc.stopRecording();
         }
         await rtc.cleanup();
         webrtcRef.current = null;
@@ -201,7 +208,7 @@ function CallContent() {
     if (!firebaseUser || !partnerId) return;
     if (mountedRef.current) setStatus('init');
 
-    let cid = callId;
+    let cid = callIdRef.current;
     if (!isCallee) {
       try {
         const callRef = await addDoc(collection(db, 'calls'), {
@@ -217,6 +224,7 @@ function CallContent() {
           createdAt: serverTimestamp(),
         });
         cid = callRef.id;
+        callIdRef.current = cid;
         if (mountedRef.current) setCallId(cid);
       } catch (err: any) {
         if (mountedRef.current) setError(`Failed to create call: ${err.message}`);
@@ -236,6 +244,11 @@ function CallContent() {
 
     rtc.onConnectionState = (state) => {
       if (!mountedRef.current) return;
+      if (state === 'connected' && disconnectTimerRef.current) {
+        // Transient network blip recovered: keep the call (and recording) alive.
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = undefined;
+      }
       if (state === 'connected' && !timerRef.current) {
         setStatus('connected');
         chunkUploadsRef.current = [];
@@ -246,7 +259,7 @@ function CallContent() {
           // empty-string race before setCallId has flushed.
           const path = chunkObjectPath(cid, firebaseUser.uid, index, extFromMime(mime));
           chunkUploadsRef.current.push(
-            uploadBytes(ref(storage, path), blob)
+            withRetry(() => uploadBytes(ref(storage, path), blob))
               .then(() => { anyChunkUploadedRef.current = true; })
               .catch((e) => console.error('[Call] chunk upload failed', index, e?.message || e))
           );
@@ -256,8 +269,15 @@ function CallContent() {
           durationRef.current += 1;
           if (mountedRef.current) setDuration(d => d + 1);
         }, 1000);
-      } else if (state === 'disconnected' || state === 'failed') {
+      } else if (state === 'failed') {
         handleEnd();
+      } else if (state === 'disconnected' && !disconnectTimerRef.current) {
+        // 'disconnected' is often temporary (Wi-Fi/cell handover). Give the
+        // connection a few seconds to recover before hanging up and finalizing.
+        disconnectTimerRef.current = setTimeout(() => {
+          disconnectTimerRef.current = undefined;
+          handleEnd();
+        }, 8000);
       }
     };
 
@@ -321,6 +341,7 @@ function CallContent() {
     if (mountedRef.current) setStatus('ended');
     if (timerRef.current) clearInterval(timerRef.current);
 
+    const callId = callIdRef.current;
     const wasConnected = durationRef.current > 0;
 
     try {
@@ -333,7 +354,7 @@ function CallContent() {
             console.error('[Call] Recording upload failed:', uploadErr?.message || uploadErr);
           }
         } else {
-          rtc.stopRecording();
+          await rtc.stopRecording();
         }
         await rtc.cleanup();
         webrtcRef.current = null;
