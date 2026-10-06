@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { collection, onSnapshot, doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuthContext } from './AuthProvider';
 import { useRouter, usePathname } from 'next/navigation';
@@ -25,7 +25,14 @@ export function IncomingCallListener() {
 
     console.log('[Incoming] Listening for calls to:', firebaseUser.uid);
 
-    const unsub = onSnapshot(collection(db, 'calls'), (snap) => {
+    // Must be constrained to the user's own calls: Firestore rules reject an
+    // unfiltered listing of the calls collection.
+    const ringingForMe = query(
+      collection(db, 'calls'),
+      where('calleeId', '==', firebaseUser.uid),
+      where('status', '==', 'ringing'),
+    );
+    const unsub = onSnapshot(ringingForMe, (snap) => {
       snap.docChanges().forEach(async (change) => {
         if (change.type !== 'added' && change.type !== 'modified') return;
         const data = change.doc.data();

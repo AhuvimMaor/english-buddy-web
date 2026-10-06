@@ -92,10 +92,12 @@ describe.skipIf(!enabled)('analyze pipeline (REAL audio + REAL OpenAI)', () => {
     await db.collection('users').doc(calleeId).set({ displayName: 'Real Callee' });
 
     // Import the handler lazily so the emulator env is set first.
+    process.env.INTERNAL_API_SECRET = 'test-internal-secret';
     const { POST } = await import('./route');
     const req = {
       json: async () => ({ callId, force: true }),
       nextUrl: { searchParams: { get: () => null } },
+      headers: { get: (n: string) => (n.toLowerCase() === 'authorization' ? 'Bearer test-internal-secret' : null) },
     } as any;
 
     const res = await POST(req);

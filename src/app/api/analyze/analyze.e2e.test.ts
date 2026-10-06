@@ -131,6 +131,15 @@ vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { increment: (n: number) => ({ __inc: n }) },
 }));
 
+vi.mock('firebase-admin/auth', () => ({
+  getAuth: () => ({
+    verifyIdToken: async (token: string) => {
+      if (token === 'bad') throw new Error('invalid token');
+      return { uid: token };
+    },
+  }),
+}));
+
 vi.mock('firebase-admin/storage', () => ({
   getStorage: () => ({ bucket: () => h.bucket }),
 }));
@@ -159,10 +168,16 @@ import { POST } from './route';
 import { chunkObjectPath, chunkPrefix } from '@/lib/recording';
 import { sliceBuffer, makeFakeAudio } from './__fixtures__/audioFixtures';
 
-function makeReq(callId: string, force = false, reprocess = false) {
+process.env.INTERNAL_API_SECRET = 'internal-secret';
+
+// Regular requests authenticate as the caller 'userA' (token == uid in the mock).
+// force/reprocess are internal-only, so those use the internal secret.
+function makeReq(callId: string, force = false, reprocess = false, token?: string | null) {
+  const bearer = token === undefined ? (force || reprocess ? 'internal-secret' : 'userA') : token;
   return {
     json: async () => ({ callId, force, reprocess }),
     nextUrl: { searchParams: { get: () => null } },
+    headers: { get: (n: string) => (n.toLowerCase() === 'authorization' && bearer ? `Bearer ${bearer}` : null) },
   } as any;
 }
 
@@ -303,5 +318,42 @@ describe('analyze pipeline e2e (recorded conversation, mocked OpenAI)', () => {
     const eve = (await h.db.collection('users').doc(callerId).get()).data();
     expect(eve.callCount).toBe(1);
     expect(eve.totalCallMinutes).toBe(5);
+  });
+
+  describe('authorization', () => {
+    const seed = () => {
+      h.db.__seed('calls', 'c-auth', {
+        callerId: 'userA',
+        calleeId: 'userB',
+        analysisStatus: 'pending',
+        recording_userA: 'recordings/c-auth/userA.webm',
+        recording_userB: 'recordings/c-auth/userB.webm',
+      });
+    };
+
+    it('rejects requests without a token', async () => {
+      seed();
+      expect((await POST(makeReq('c-auth', false, false, null))).status).toBe(401);
+    });
+
+    it('rejects an invalid token', async () => {
+      seed();
+      expect((await POST(makeReq('c-auth', false, false, 'bad'))).status).toBe(401);
+    });
+
+    it('rejects a signed-in user who is not in the call', async () => {
+      seed();
+      expect((await POST(makeReq('c-auth', false, false, 'stranger'))).status).toBe(403);
+    });
+
+    it('does not let a participant force or reprocess', async () => {
+      seed();
+      expect((await POST(makeReq('c-auth', true, false, 'userA'))).status).toBe(403);
+      expect((await POST(makeReq('c-auth', false, true, 'userA'))).status).toBe(403);
+    });
+
+    it('rejects a malformed callId', async () => {
+      expect((await POST(makeReq('../users/x'))).status).toBe(400);
+    });
   });
 });

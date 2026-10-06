@@ -3,7 +3,7 @@
 import { useAuthContext } from '@/components/AuthProvider';
 import { NavBar } from '@/components/NavBar';
 import { db } from '@/lib/firebase';
-import { collection, query, limit, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, limit, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Call } from '@/types';
@@ -85,19 +85,30 @@ export default function HistoryPage() {
 
   useEffect(() => {
     if (!firebaseUser) return;
-    const q = query(collection(db, 'calls'), limit(50));
-    const unsub = onSnapshot(q, (snap) => {
-      const userCalls = snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as Call))
-        .filter(c =>
-          c.status === 'ended' &&
-          (c.callerId === firebaseUser.uid || c.calleeId === firebaseUser.uid)
-        )
+    // Rules only allow reading calls the user is part of, so the queries must be
+    // constrained to them. Two queries (as caller / as callee), merged by id.
+    const uid = firebaseUser.uid;
+    const byId = new Map<string, Call>();
+    const publish = () => {
+      const userCalls = [...byId.values()]
+        .filter(c => c.status === 'ended')
         .sort((a, b) => (b.endedAt?.seconds || 0) - (a.endedAt?.seconds || 0));
       setCalls(userCalls);
       setLoading(false);
-    }, () => setLoading(false));
-    return unsub;
+    };
+    const listen = (field: 'callerId' | 'calleeId') => {
+      return onSnapshot(
+        query(collection(db, 'calls'), where(field, '==', uid), limit(50)),
+        (snap) => {
+          snap.docs.forEach(d => { byId.set(d.id, { id: d.id, ...d.data() } as Call); });
+          snap.docChanges().forEach(ch => { if (ch.type === 'removed') byId.delete(ch.doc.id); });
+          publish();
+        },
+        () => setLoading(false),
+      );
+    };
+    const unsubs = [listen('callerId'), listen('calleeId')];
+    return () => unsubs.forEach(u => u());
   }, [firebaseUser]);
 
   return (

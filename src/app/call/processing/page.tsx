@@ -3,7 +3,7 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useEffect, useState, useRef, Suspense } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
 import { AnalysisStatus } from '@/types';
 
 const STEPS = [
@@ -35,11 +35,23 @@ function ProcessingContent() {
     if (!callId || triggeredRef.current) return;
     triggeredRef.current = true;
 
-    fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callId }),
-    })
+    // The route requires a Firebase ID token and checks the user is in the call.
+    const waitForUser = new Promise<string>((resolve, reject) => {
+      const unsub = auth.onAuthStateChanged((user) => {
+        if (!user) return;
+        unsub();
+        user.getIdToken().then(resolve, reject);
+      });
+    });
+
+    waitForUser
+      .then((token) =>
+        fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ callId }),
+        })
+      )
       .then(async (res) => {
         if (res.ok) return;
         // Gateway timeouts (502/503/504) happen when the edge proxy gives up

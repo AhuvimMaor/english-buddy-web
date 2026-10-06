@@ -1,57 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-import { getStorage } from 'firebase-admin/storage';
+import { getAdminDb, getAdminBucket } from '@/lib/server/admin';
+import { authenticate } from '@/lib/server/auth';
+import { sortChunkFilesByIndex } from '@/lib/recording';
 
-function getAdminApp() {
-  if (getApps().length === 0) {
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-    if (serviceAccount) {
-      const decoded = serviceAccount.startsWith('{')
-        ? serviceAccount
-        : Buffer.from(serviceAccount, 'base64').toString('utf-8');
-      const parsed = JSON.parse(decoded);
-      return initializeApp({ credential: cert(parsed), storageBucket: "english-buddy-431f9.firebasestorage.app" });
-    } else if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
-      process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8180';
-      return initializeApp({ projectId: 'demo-english-buddy', storageBucket: "demo-english-buddy.firebasestorage.app" });
-    } else {
-      return initializeApp({ projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '', storageBucket: "english-buddy-431f9.firebasestorage.app" });
-    }
-  }
-  return getApps()[0];
-}
-
+// Ops-only inspection endpoint. It exposes user data and raw recordings, so it
+// is closed unless INTERNAL_API_SECRET is configured AND sent as a Bearer token.
 export async function GET(req: NextRequest) {
+  if (!process.env.INTERNAL_API_SECRET) {
+    return NextResponse.json({ error: 'not found' }, { status: 404 });
+  }
+  const caller = await authenticate(req);
+  if (!caller?.internal) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  }
+
   try {
-    const app = getAdminApp();
-    const db = getFirestore(app);
     const prefix = req.nextUrl.searchParams.get('prefix');
 
     if (prefix) {
-      const bucket = getStorage(app).bucket();
+      if (!/^recordings\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(prefix)) {
+        return NextResponse.json({ error: 'invalid prefix' }, { status: 400 });
+      }
+      const bucket = getAdminBucket();
       const [files] = await bucket.getFiles({ prefix: `${prefix}/` });
-      
-      const sortedFiles = files
-        .map(f => {
-          const match = f.name.match(/chunk-(\d+)\.[a-z0-9]+$/i);
-          return { file: f, index: match ? parseInt(match[1], 10) : -1 };
-        })
-        .filter(f => f.index !== -1)
-        .sort((a, b) => a.index - b.index);
-
-      if (sortedFiles.length === 0) {
+      const ordered = sortChunkFilesByIndex(files.map((f) => f.name));
+      if (ordered.length === 0) {
         return NextResponse.json({ error: `No chunks found for ${prefix}` }, { status: 404 });
       }
-
-      const chunks = [];
-      for (const { file } of sortedFiles) {
-        const [buffer] = await file.download();
-        chunks.push(buffer);
-      }
-
-      const fullBuffer = Buffer.concat(chunks);
-      return new NextResponse(fullBuffer, {
+      const buffers = await Promise.all(ordered.map((name) => bucket.file(name).download().then(([b]) => b)));
+      return new NextResponse(new Uint8Array(Buffer.concat(buffers)), {
         headers: {
           'Content-Type': 'audio/webm',
           'Content-Disposition': `attachment; filename="${prefix.split('/').join('_')}.webm"`,
@@ -59,25 +36,18 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const usersSnap = await db.collection('users').get();
-    const users = usersSnap.docs.map(d => ({
-      id: d.id,
-      displayName: d.data().displayName,
-    }));
-
-    const callsSnap = await db.collection('calls').orderBy('createdAt', 'desc').limit(5).get();
-    const calls = callsSnap.docs.map(d => Object.assign({id: d.id}, d.data()));
-
-    const reportsSnap = await db.collection('reports').orderBy('createdAt', 'desc').limit(5).get();
-    const reports = reportsSnap.docs.map(d => Object.assign({id: d.id}, d.data()));
-
+    const db = getAdminDb();
+    const [callsSnap, reportsSnap] = await Promise.all([
+      db.collection('calls').orderBy('createdAt', 'desc').limit(5).get(),
+      db.collection('reports').orderBy('createdAt', 'desc').limit(5).get(),
+    ]);
     return NextResponse.json({
       timestamp: new Date().toISOString(),
-      users,
-      calls,
-      reports,
-    }, { status: 200 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+      calls: callsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      reports: reportsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    });
+  } catch (error) {
+    console.error('Debug route error:', error);
+    return NextResponse.json({ error: 'internal error' }, { status: 500 });
   }
 }

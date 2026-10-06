@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI, { toFile } from 'openai';
-import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { getStorage } from 'firebase-admin/storage';
+import { FieldValue } from 'firebase-admin/firestore';
+import { getAdminDb, getAdminBucket } from '@/lib/server/admin';
+import { authenticate, isParticipant } from '@/lib/server/auth';
+import { rateLimit } from '@/lib/server/rateLimit';
 import {
   resolveRecording,
   sortChunkFilesByIndex,
@@ -14,25 +15,6 @@ export const maxDuration = 300; // Allow up to 5 minutes on Vercel
 
 function getOpenAI() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-}
-
-function getAdminDb() {
-  if (getApps().length === 0) {
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-    if (serviceAccount) {
-      const decoded = serviceAccount.startsWith('{')
-        ? serviceAccount
-        : Buffer.from(serviceAccount, 'base64').toString('utf-8');
-      const parsed = JSON.parse(decoded);
-      initializeApp({ credential: cert(parsed) });
-    } else if (process.env.NEXT_PUBLIC_USE_EMULATORS === 'true') {
-      process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8180';
-      initializeApp({ projectId: 'demo-english-buddy' });
-    } else {
-      initializeApp({ projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '' });
-    }
-  }
-  return getFirestore();
 }
 
 interface TranscriptSegment {
@@ -142,9 +124,17 @@ Output valid JSON only.`;
 
 export async function POST(req: NextRequest) {
   try {
+    const caller = await authenticate(req);
+    if (!caller) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+    if (!caller.internal && !rateLimit(`analyze:${caller.uid}`, 10, 60_000)) {
+      return NextResponse.json({ error: 'too many requests' }, { status: 429 });
+    }
+
     const body = await req.json().catch(() => ({}));
     const { callId } = body;
-    if (!callId) {
+    if (typeof callId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(callId)) {
       return NextResponse.json({ error: 'callId required' }, { status: 400 });
     }
 
@@ -158,10 +148,21 @@ export async function POST(req: NextRequest) {
 
     const callData = callDoc.data()!;
 
-    const force = req.nextUrl?.searchParams?.get('force') === 'true' || body.force === true;
+    if (!isParticipant(caller, callData)) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
+
+    // force/reprocess re-run paid analysis, so only internal callers may use them.
+    const wantsForce = req.nextUrl?.searchParams?.get('force') === 'true' || body.force === true;
+    const wantsReprocess = req.nextUrl?.searchParams?.get('reprocess') === 'true' || body.reprocess === true;
+    if ((wantsForce || wantsReprocess) && !caller.internal) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
+
+    const force = wantsForce;
     // Re-run analysis for an already-completed call and replace its reports
     // (e.g. after a transcription fix). Implies force.
-    const reprocess = req.nextUrl?.searchParams?.get('reprocess') === 'true' || body.reprocess === true;
+    const reprocess = wantsReprocess;
 
     // Prevent double execution. A reprocess is allowed to re-run a 'complete'
     // (or 'failed') call, but never one that is genuinely in flight.
@@ -206,9 +207,7 @@ export async function POST(req: NextRequest) {
       throw e;
     }
 
-    const bucket = getStorage().bucket(
-      `${process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'english-buddy-431f9'}.firebasestorage.app`
-    );
+    const bucket = getAdminBucket();
 
     // Get user names for labeling
     const [callerUserDoc, calleeUserDoc] = await Promise.all([
