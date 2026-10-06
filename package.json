@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:watch": "vitest --exclude \"**/*.integration.test.ts\"",
     "test:integration": "npx -y firebase-tools emulators:exec --only firestore,storage --project demo-english-buddy \"vitest run src/app/api/analyze/analyze.integration.test.ts\"",
@@ -32,6 +34,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.4",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.8"

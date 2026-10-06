@@ -1,36 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# English Buddy
 
-## Getting Started
+Voice-call practice for Hebrew speakers learning English. Two people call each other over WebRTC, see live captions (Hebrew words highlighted), and get an AI report afterwards: grammar fixes, fluency score, tips, and a table of the Hebrew words they used with English translations.
 
-First, run the development server:
+Built with Next.js 16, Firebase (Auth, Firestore, Storage), OpenAI (Whisper + GPT-4o), and Capacitor for iOS and Android.
+
+## Develop
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local   # fill in the values
+npm ci
+npm run dev                  # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Command | What it does |
+| --- | --- |
+| `npm run typecheck` | TypeScript check |
+| `npm run lint` | ESLint |
+| `npm test` | Unit and mocked end-to-end tests |
+| `npm run test:integration` | Storage/Firestore emulator tests (needs Java) |
+| `npm run validate:analyze` | Real-audio regression check (needs `OPENAI_API_KEY`) |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## How a call works
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. The caller creates a `calls/{id}` document; the callee gets a ringing prompt.
+2. WebRTC signaling goes through `calls/{id}/signaling`.
+3. Each phone records only its own mic and uploads 15 second chunks to Storage while the call runs.
+4. Every few seconds a short segment of the mic is sent to `/api/live-caption`, transcribed, and shown to both people. Silent segments are skipped.
+5. After hang-up, `/api/analyze` transcribes both recordings with Whisper, merges them in time order, and asks GPT-4o for one report per person.
 
-## Learn More
+## Production checklist
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Set every variable in `.env.example`. `INTERNAL_API_SECRET` must be a long random string.
+- Deploy `firestore.rules` and `storage.rules` (`firebase deploy --only firestore:rules,storage`). The app relies on them: users can only read their own calls, recordings and reports.
+- Use your own TURN server (`NEXT_PUBLIC_TURN_*`). The built-in public relay is for development only.
+- `/api/analyze` and `/api/live-caption` need a Firebase ID token and are rate limited per user. The limiter is in memory, so use a shared store if you run more than one instance.
+- Health check: `GET /api/health`.
+- The mobile apps load the live Railway URL (`capacitor.config.ts`), so web changes ship by deploying the site.

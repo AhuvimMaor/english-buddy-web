@@ -80,6 +80,83 @@ function CallContent() {
     }
   };
 
+  const handleRemoteHangup = async () => {
+    if (endingRef.current) return;
+    endingRef.current = true;
+    const callId = callIdRef.current;
+    const wasConnected = durationRef.current > 0;
+    if (mountedRef.current) setStatus('ended');
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    try {
+      const rtc = webrtcRef.current;
+      if (rtc) {
+        if (callId && firebaseUser && wasConnected) {
+          try {
+            await finalizeRecording(rtc, callId, firebaseUser.uid);
+          } catch (e: any) {
+            console.error('[Call] Upload failed:', e?.message || e);
+          }
+        } else {
+          await rtc.stopRecording();
+        }
+        await rtc.cleanup();
+        webrtcRef.current = null;
+      }
+    } catch (err) {
+      console.error('[Call] Remote hangup cleanup error:', err);
+    }
+
+    if (wasConnected) {
+      router.push(`/call/processing?callId=${callId}`);
+    } else {
+      router.push('/partners');
+    }
+  };
+
+  const handleEnd = async () => {
+    if (endingRef.current) return;
+    endingRef.current = true;
+    if (mountedRef.current) setStatus('ended');
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    const callId = callIdRef.current;
+    const wasConnected = durationRef.current > 0;
+
+    try {
+      const rtc = webrtcRef.current;
+      if (rtc) {
+        if (callId && firebaseUser) {
+          try {
+            await finalizeRecording(rtc, callId, firebaseUser.uid);
+          } catch (uploadErr: any) {
+            console.error('[Call] Recording upload failed:', uploadErr?.message || uploadErr);
+          }
+        } else {
+          await rtc.stopRecording();
+        }
+        await rtc.cleanup();
+        webrtcRef.current = null;
+      }
+
+      if (callId) {
+        await updateDoc(doc(db, 'calls', callId), {
+          status: 'ended',
+          endedAt: serverTimestamp(),
+          durationSeconds: durationRef.current,
+        });
+      }
+    } catch (err) {
+      console.error('[Call] End error:', err);
+    }
+
+    if (wasConnected) {
+      router.push(`/call/processing?callId=${callId}`);
+    } else {
+      router.push('/partners');
+    }
+  };
+
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -103,8 +180,7 @@ function CallContent() {
   useEffect(() => {
     if (status === 'ringing' && !isCallee) {
       let ctx: AudioContext | null = null;
-      let intervalId: ReturnType<typeof setInterval>;
-
+      
       const playDialTone = () => {
         try {
           if (!ctx) ctx = new AudioContext();
@@ -122,7 +198,7 @@ function CallContent() {
       };
 
       playDialTone();
-      intervalId = setInterval(playDialTone, 3000); // beep every 3s (1s on, 2s off)
+      const intervalId = setInterval(playDialTone, 3000); // beep every 3s (1s on, 2s off)
 
       return () => {
         clearInterval(intervalId);
@@ -177,40 +253,6 @@ function CallContent() {
     });
     return unsub;
   }, [callId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleRemoteHangup = async () => {
-    if (endingRef.current) return;
-    endingRef.current = true;
-    const callId = callIdRef.current;
-    const wasConnected = durationRef.current > 0;
-    if (mountedRef.current) setStatus('ended');
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    try {
-      const rtc = webrtcRef.current;
-      if (rtc) {
-        if (callId && firebaseUser && wasConnected) {
-          try {
-            await finalizeRecording(rtc, callId, firebaseUser.uid);
-          } catch (e: any) {
-            console.error('[Call] Upload failed:', e?.message || e);
-          }
-        } else {
-          await rtc.stopRecording();
-        }
-        await rtc.cleanup();
-        webrtcRef.current = null;
-      }
-    } catch (err) {
-      console.error('[Call] Remote hangup cleanup error:', err);
-    }
-
-    if (wasConnected) {
-      router.push(`/call/processing?callId=${callId}`);
-    } else {
-      router.push('/partners');
-    }
-  };
 
   const initCall = useCallback(async () => {
     if (!firebaseUser || !partnerId) return;
@@ -355,49 +397,6 @@ function CallContent() {
       }).catch(() => {});
     }
   }, [firebaseUser, partnerId, status, initCall]);
-
-  const handleEnd = async () => {
-    if (endingRef.current) return;
-    endingRef.current = true;
-    if (mountedRef.current) setStatus('ended');
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    const callId = callIdRef.current;
-    const wasConnected = durationRef.current > 0;
-
-    try {
-      const rtc = webrtcRef.current;
-      if (rtc) {
-        if (callId && firebaseUser) {
-          try {
-            await finalizeRecording(rtc, callId, firebaseUser.uid);
-          } catch (uploadErr: any) {
-            console.error('[Call] Recording upload failed:', uploadErr?.message || uploadErr);
-          }
-        } else {
-          await rtc.stopRecording();
-        }
-        await rtc.cleanup();
-        webrtcRef.current = null;
-      }
-
-      if (callId) {
-        await updateDoc(doc(db, 'calls', callId), {
-          status: 'ended',
-          endedAt: serverTimestamp(),
-          durationSeconds: durationRef.current,
-        });
-      }
-    } catch (err) {
-      console.error('[Call] End error:', err);
-    }
-
-    if (wasConnected) {
-      router.push(`/call/processing?callId=${callId}`);
-    } else {
-      router.push('/partners');
-    }
-  };
 
   const captions = useCaptions(callId, captionsOn && status === 'connected');
 

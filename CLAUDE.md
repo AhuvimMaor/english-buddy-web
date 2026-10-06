@@ -10,9 +10,9 @@ English Buddy: a Next.js 16 / React 19 app where Hebrew speakers practice Englis
 
 ## Commands
 
-No `lint` script and no ESLint config exist. TypeScript is the only static check (`npx tsc --noEmit`).
-
 ```bash
+npm run typecheck            # tsc --noEmit
+npm run lint                 # eslint src (errors fail CI, warnings do not)
 npm run dev                  # next dev
 npm run build && npm start   # production build / serve
 npm test                     # vitest, excludes *.integration.test.ts
@@ -27,16 +27,20 @@ Vitest runs in the `node` environment and only picks up `src/**/*.test.ts`, so t
 
 Local emulators (see `firebase.json`): auth 9099, firestore 8180, storage 9199, UI 4000. Set `NEXT_PUBLIC_USE_EMULATORS=true` to point both the client SDK (`src/lib/firebase.ts`) and the server routes at them.
 
-Env vars: `NEXT_PUBLIC_FIREBASE_*` (client config), `FIREBASE_SERVICE_ACCOUNT_KEY` (raw JSON or base64, server only), `OPENAI_API_KEY`, `NEXT_PUBLIC_USE_EMULATORS`.
+Env vars are listed in `.env.example`. CI (`.github/workflows/ci.yml`) runs typecheck, lint, test and build.
 
 `AGENTS.md` warns that this Next.js version has breaking changes. Read the matching guide in `node_modules/next/dist/docs/` (run `npm ci` first) before changing routing, route handlers, or config.
 
 ## Architecture
 
-**There is no custom server.** Everything is Firebase (Auth, Firestore, Storage) from the browser, plus two Next route handlers that use `firebase-admin`:
+**There is no custom server.** Everything is Firebase (Auth, Firestore, Storage) from the browser, plus Next route handlers that use `firebase-admin` (shared setup in `src/lib/server/`):
 
-- `src/app/api/analyze/route.ts`: the analysis pipeline (POST `{callId}`, optional `force` / `reprocess`).
-- `src/app/api/debug/route.ts`: dumps recent users, calls and reports, and streams concatenated recording chunks via `?prefix=`. It has no authentication.
+- `src/app/api/analyze/route.ts`: the analysis pipeline (POST `{callId}`). `force` / `reprocess` are internal-only.
+- `src/app/api/live-caption/route.ts`: transcribes a short audio segment during a call and writes it to `calls/{id}/captions`.
+- `src/app/api/debug/route.ts`: ops inspection and recording download. Closed unless `INTERNAL_API_SECRET` is set and sent as a Bearer token.
+- `src/app/api/health/route.ts`: liveness probe.
+
+All routes except health require `Authorization: Bearer <Firebase ID token>` (or `INTERNAL_API_SECRET`), checked by `authenticate()` / `isParticipant()` in `src/lib/server/auth.ts`. Analyze and live-caption are also rate limited per user (`rateLimit.ts`, in memory).
 
 ### Call and recording flow (spans several files)
 
@@ -44,8 +48,9 @@ Env vars: `NEXT_PUBLIC_FIREBASE_*` (client config), `FIREBASE_SERVICE_ACCOUNT_KE
 2. `src/lib/webrtc.ts` (`WebRTCCall`) does signaling through the Firestore subcollection `calls/{id}/signaling` (offer, answer, ICE docs). The STUN/TURN config is hardcoded, using the public openrelay TURN credentials.
 3. Each client records **only its own mic**, from a clone of the local stream, with `MediaRecorder` and a 15 s timeslice. Every slice is uploaded to Storage as `recordings/{callId}/{uid}/chunk-NNNNNN.{ext}` while the call runs. On hangup, `finalizeRecording` writes `recordingChunkPrefix_{uid}`, `recordingChunkCount_{uid}` and `recordingMime_{uid}` onto the call doc. If no chunk was uploaded, it falls back to a single `recordings/{callId}/{uid}.{ext}` file. Per-speaker fields are keyed by uid at runtime, so they are not in `Call` in `src/types/index.ts`.
 4. `src/lib/recording.ts` holds the pure helpers shared by client and server (paths, chunk ordering, `resolveRecording`). Keep it free of browser and Firebase imports. `resolveRecording` handles three layouts in order: chunked, per-speaker single file, legacy `recordingPath` / `partnerRecordingPath`.
-5. `/call/processing` calls `POST /api/analyze` and watches `calls/{id}.analysisStatus`. The route transcribes each speaker separately (Whisper `whisper-1`, `language: 'en'`, segment timestamps), merges the segments by `start` time into `[Name]: text` lines, then runs one GPT-4o JSON call per participant. It writes a `reports` doc per participant and increments `callCount` and `totalCallMinutes` (skipped on `reprocess`).
-6. The route takes a Firestore transaction lock (`analysisStatus: transcribing`) and returns 200 "Already processing" for duplicates. It also returns 200 "Waiting for partner recording" until both recordings exist, unless `force` or `reprocess` is set.
+5. Live captions: `LiveCaptioner` (`src/lib/liveCaptions.ts`) cuts the mic into ~6 s self-contained segments, skips silent ones, and posts them to `/api/live-caption`. Both users read `calls/{id}/captions` through `useCaptions`. Hebrew words are highlighted by `src/lib/hebrew.ts`.
+6. `/call/processing` calls `POST /api/analyze` and watches `calls/{id}.analysisStatus`. The route transcribes each speaker separately (Whisper `whisper-1`, `language: 'en'`, segment timestamps), merges the segments by `start` time into `[Name]: text` lines, then runs one GPT-4o JSON call per participant. It writes a `reports` doc per participant and increments `callCount` and `totalCallMinutes` (skipped on `reprocess`).
+7. The route takes a Firestore transaction lock (`analysisStatus: transcribing`) and returns 200 "Already processing" for duplicates. It also returns 200 "Waiting for partner recording" until both recordings exist, unless `force` or `reprocess` is set.
 
 ### Things that are easy to break
 
@@ -53,11 +58,14 @@ Env vars: `NEXT_PUBLIC_FIREBASE_*` (client config), `FIREBASE_SERVICE_ACCOUNT_KE
 - Hebrew words must come back in Hebrew script in `hebrewWords` and in inline `corrections`. This is enforced only by `SYSTEM_PROMPT` in `route.ts`, not by code.
 - The transcript must keep the original alternating chronological order, with one sentence per entry. `analyze.e2e.test.ts` guards this.
 - Whisper rejects files over 25 MB (`WHISPER_MAX_BYTES`). Chunks are concatenated in memory before the upload to Whisper.
-- Transcription is post-call and batch only. There is no live or streaming transcript in the UI.
+- `WebRTCCall.stopRecording()` is async. Await it before reading chunk uploads or the chunk count, because the last slice arrives after `stop()`.
+- The call page keeps `callIdRef` because WebRTC callbacks are created before `callId` state updates. A WebRTC `disconnected` state gets an 8 s grace period before the call ends.
+- Every Firestore query on `calls` must be filtered by `callerId` or `calleeId`, or the rules reject it.
+- The report's `hebrewWords` table is built by `mergeHebrewWords()` (`src/lib/vocabulary.ts`), which also pulls Hebrew words from inline corrections.
 
 ### Data model and rules
 
-`src/types/index.ts` defines `UserProfile`, `Call`, `Report`, etc. Collections: `users`, `calls` (plus `signaling`), `reports`. `firestore.rules` lets clients read only their own reports and never write them. Reports are created only by the admin SDK in the analyze route. Rules and the emulator ports must stay in sync with `firebase.json`.
+`src/types/index.ts` defines `UserProfile`, `Call`, `Report`, etc. Collections: `users`, `calls` (plus `signaling`), `reports`. `firestore.rules` lets clients read only their own calls and reports, and limits call updates to state fields plus the user's own `recording*_{uid}` keys. Reports, captions, `analysisStatus` and call stats are written only by the admin SDK. `storage.rules` restricts recordings to call participants (it reads the call doc). Rules are not deployed by CI; run `firebase deploy --only firestore:rules,storage`.
 
 ### Auth and shell
 

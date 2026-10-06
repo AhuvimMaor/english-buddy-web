@@ -1,32 +1,36 @@
 import { db } from './firebase';
 import {
-  doc, collection, addDoc, onSnapshot, serverTimestamp,
+  collection, addDoc, onSnapshot, serverTimestamp,
 } from 'firebase/firestore';
 import { CHUNK_TIMESLICE_MS } from './recording';
 
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
+// Production should set NEXT_PUBLIC_TURN_* to a TURN server you control. The
+// public openrelay fallback is shared, rate limited and meant for development.
+function buildIceServers(): RTCConfiguration {
+  const iceServers: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.relay.metered.ca:80' },
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-    {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
-    },
-  ],
-};
+  ];
+  const turnUrls = (process.env.NEXT_PUBLIC_TURN_URLS || '').split(',').map((u) => u.trim()).filter(Boolean);
+  if (turnUrls.length > 0) {
+    iceServers.push({
+      urls: turnUrls,
+      username: process.env.NEXT_PUBLIC_TURN_USERNAME,
+      credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL,
+    });
+  } else {
+    const fallback = { username: 'openrelayproject', credential: 'openrelayproject' };
+    iceServers.push(
+      { urls: 'stun:stun.relay.metered.ca:80' },
+      { urls: 'turn:openrelay.metered.ca:80', ...fallback },
+      { urls: 'turn:openrelay.metered.ca:443', ...fallback },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', ...fallback },
+    );
+  }
+  return { iceServers };
+}
+
+const ICE_SERVERS: RTCConfiguration = buildIceServers();
 
 export class WebRTCCall {
   private pc: RTCPeerConnection;

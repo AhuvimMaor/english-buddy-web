@@ -22,13 +22,6 @@ export default function ProfilePage() {
     if (!loading && !firebaseUser) router.replace('/login');
   }, [loading, firebaseUser, router]);
 
-  useEffect(() => {
-    if (profile && !isEditing) {
-      setEditName(profile.displayName);
-      setEditLevel(profile.englishLevel);
-    }
-  }, [profile, isEditing]);
-
   if (loading || !profile) {
     return (
       <div className="min-h-screen bg-warm-gradient flex items-center justify-center">
@@ -190,7 +183,7 @@ export default function ProfilePage() {
             {isEditing ? (
               <select
                 value={editLevel}
-                onChange={(e) => setEditLevel(e.target.value as any)}
+                onChange={(e) => setEditLevel(e.target.value as 'beginner' | 'intermediate' | 'advanced')}
                 className="text-sm text-[var(--text-primary)] bg-gray-50 border border-gray-200 rounded p-1 focus:outline-none focus:border-[var(--accent-coral)]"
               >
                 <option value="beginner">Beginner</option>
@@ -223,7 +216,11 @@ export default function ProfilePage() {
             </div>
           ) : (
             <button
-              onClick={() => setIsEditing(true)}
+              onClick={() => {
+                setEditName(profile.displayName);
+                setEditLevel(profile.englishLevel);
+                setIsEditing(true);
+              }}
               className="w-full py-3.5 text-[var(--text-primary)] font-semibold text-sm bg-white rounded-[var(--radius-sm)] shadow-[var(--shadow-sm)] hover-lift"
             >
               Edit Profile
