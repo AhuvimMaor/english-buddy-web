@@ -36,6 +36,7 @@ service cloud.firestore {
           'recordingChunkPrefix_' + request.auth.uid,
           'recordingChunkCount_' + request.auth.uid,
           'recordingMime_' + request.auth.uid,
+          'recordingStartedAt_' + request.auth.uid,
           'recording_' + request.auth.uid
         ]);
 

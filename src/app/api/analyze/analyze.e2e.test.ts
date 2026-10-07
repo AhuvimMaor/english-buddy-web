@@ -148,7 +148,10 @@ vi.mock('openai', () => {
   const transcriptions = {
     create: async ({ file }: any) => {
       h.transcriptionBuffers.push(file?.__buf);
-      return { segments: [{ start: 0, end: 2, text: 'Hello my friend' }], text: 'Hello my friend' };
+      // Distinct text per track, otherwise the echo filter (rightly) treats
+      // two identical simultaneous sentences as one.
+      const text = h.transcriptionBuffers.length % 2 === 1 ? 'Hello my friend' : 'Nice to meet you';
+      return { segments: [{ start: 0, end: 2, text }], text };
     },
   };
   const chat = {

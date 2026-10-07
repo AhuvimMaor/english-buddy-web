@@ -5,6 +5,7 @@ import { getAdminDb, getAdminBucket } from '@/lib/server/admin';
 import { authenticate, isParticipant } from '@/lib/server/auth';
 import { rateLimit } from '@/lib/server/rateLimit';
 import { mergeHebrewWords } from '@/lib/vocabulary';
+import { mergeSegments, computeOffsets, dedupeTranscriptLines } from '@/lib/transcript';
 import {
   resolveRecording,
   sortChunkFilesByIndex,
@@ -236,13 +237,16 @@ export async function POST(req: NextRequest) {
           transcribeSpeaker(calleeRes)
         ]);
 
-        // Combine and sort chronologically by start time
-        const combinedSegments = [
-          ...callerSegments.map(seg => ({ ...seg, speaker: callerName })),
-          ...calleeSegments.map(seg => ({ ...seg, speaker: calleeName }))
-        ];
-
-        combinedSegments.sort((a, b) => a.start - b.start);
+        // Put both tracks on one clock (each phone starts recording at a
+        // slightly different moment), sort, and drop echoed duplicates.
+        const offsets = computeOffsets({
+          [callerId]: callData[`recordingStartedAt_${callerId}`],
+          [calleeId]: callData[`recordingStartedAt_${calleeId}`],
+        });
+        const combinedSegments = mergeSegments([
+          { speaker: callerName, segments: callerSegments, offsetSeconds: offsets[callerId] },
+          { speaker: calleeName, segments: calleeSegments, offsetSeconds: offsets[calleeId] },
+        ]);
         transcription = combinedSegments.map(seg => `[${seg.speaker}]: ${seg.text}`).join('\n');
       } else {
         // Fallback: single recording
@@ -293,7 +297,7 @@ export async function POST(req: NextRequest) {
           userId: participant.userId,
           partnerId: participant.partnerId,
           callDuration: callData.durationSeconds || 0,
-          transcript: analysis.transcript || [],
+          transcript: Array.isArray(analysis.transcript) ? dedupeTranscriptLines(analysis.transcript) : [],
           grammarMistakes: analysis.grammarMistakes || [],
           hebrewWords: mergeHebrewWords(analysis),
           fluencyScore: analysis.fluencyScore || null,

@@ -66,6 +66,7 @@ function CallContent() {
         [`recordingChunkPrefix_${uid}`]: chunkPrefix(cid, uid),
         [`recordingChunkCount_${uid}`]: rtc.getChunkCount(),
         [`recordingMime_${uid}`]: recordingMimeRef.current,
+        [`recordingStartedAt_${uid}`]: rtc.getRecordingStartedAt(),
       });
       console.log('[Call] Chunked recording finalized:', rtc.getChunkCount(), 'chunks');
       return;

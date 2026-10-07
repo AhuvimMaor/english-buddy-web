@@ -41,6 +41,7 @@ export class WebRTCCall {
   private localRecorder: MediaRecorder | null = null;
   private localChunks: Blob[] = [];
   private chunkIndex = 0;
+  private recordingStartedAtMs: number | null = null;
   // Called for each recorded slice so the caller can upload it during the call.
   // Set this before startRecording(); leaving it null preserves the legacy
   // accumulate-and-upload-at-end behaviour.
@@ -223,6 +224,7 @@ export class WebRTCCall {
 
     this.localChunks = [];
     this.chunkIndex = 0;
+    this.recordingStartedAtMs = Date.now();
 
     // Record only MY voice (dedicated stream, no echo cancellation = raw quality)
     this.localRecorder = this.createRecorder(stream, this.localChunks);
@@ -242,6 +244,11 @@ export class WebRTCCall {
       this.localRecorder.start(CHUNK_TIMESLICE_MS);
       console.log('[WebRTC] Per-speaker recording started (my mic only)');
     }
+  }
+
+  // Wall-clock start of this speaker's recording, used to line up both tracks.
+  getRecordingStartedAt(): number | null {
+    return this.recordingStartedAtMs;
   }
 
   getChunkCount(): number {
